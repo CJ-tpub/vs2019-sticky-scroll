@@ -125,7 +125,7 @@ namespace StickyScroll
                     indent++;
                 if (text.Substring(indent).Trim().Length == 0)
                     continue; // 空行区域起点（如纯缩进行）不粘滞
-                result.Add(new StickyLine(lineNumber, text.Substring(indent), indent, depth++));
+                result.Add(new StickyLine(lineNumber, text, indent, depth++)); // 保留原始文本（含缩进）
             }
         }
 
@@ -196,7 +196,7 @@ namespace StickyScroll
             chain.Reverse();
             int d = 0;
             foreach (var l in chain)
-                result.Add(new StickyLine(l.LineNumber, l.Text, l.Indent, d++));
+                result.Add(new StickyLine(l.LineNumber, l.Text, l.Indent, d++)); // 保留原始文本（含缩进）
         }
 
         /// <summary>
@@ -297,7 +297,7 @@ namespace StickyScroll
 
                     if (onlyWhitespace)
                     {
-                        result.Add(new ScannedLine(lineNumber, trimmed, indent, depth));
+                        result.Add(new ScannedLine(lineNumber, text, indent, depth)); // 原始文本（含缩进）
                     }
                     depth++;
                 }

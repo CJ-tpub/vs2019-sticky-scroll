@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.VisualStudio.Text;
@@ -13,7 +15,8 @@ namespace StickyScroll
 {
     /// <summary>
     /// 粘滞滚动条（top margin）：固定在编辑器视口顶部，显示当前作用域链。
-    /// 行为对齐 VS2022/VSCode：滚动时把 namespace/class/method 等声明行钉在顶部，点击可跳转。
+    /// 渲染目标：与原代码行视觉一致——保留原始缩进、编辑器背景色、语法高亮，
+    /// 看上去就像原有部分行代码在下滑过程中滞留在了顶部。
     /// </summary>
     internal sealed class StickyScrollMargin : IWpfTextViewMargin
     {
@@ -21,22 +24,33 @@ namespace StickyScroll
 
         // 默认显示的最大粘滞行数（后续由选项页接管）
         private const int DefaultMaxLines = 3;
-        private const double BackgroundOpacity = 0.94;
 
         private readonly IWpfTextView _view;
         private readonly StickyLineProvider _stickyLineProvider;
         private readonly IEditorFormatMap _editorFormatMap;
+        private readonly IClassifierAggregatorService _classifierAggregatorService;
+        private readonly IClassificationFormatMapService _classificationFormatMapService;
         private readonly StackPanel _root;
         private bool _isDisposed;
+
+        // 分类器（按 buffer 缓存）
+        private IClassifier _classifier;
 
         // 最近一次渲染的链（用于避免无谓重绘）
         private IList<StickyLine> _lastLines = new StickyLine[0];
 
-        public StickyScrollMargin(IWpfTextViewHost textViewHost, StickyLineProvider stickyLineProvider, IEditorFormatMap editorFormatMap)
+        public StickyScrollMargin(
+            IWpfTextViewHost textViewHost,
+            StickyLineProvider stickyLineProvider,
+            IEditorFormatMap editorFormatMap,
+            IClassifierAggregatorService classifierAggregatorService,
+            IClassificationFormatMapService classificationFormatMapService)
         {
             _view = textViewHost.TextView;
             _stickyLineProvider = stickyLineProvider;
             _editorFormatMap = editorFormatMap;
+            _classifierAggregatorService = classifierAggregatorService;
+            _classificationFormatMapService = classificationFormatMapService;
 
             _root = new StackPanel
             {
@@ -62,7 +76,6 @@ namespace StickyScroll
 
         private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
         {
-            // 文本变化：下一次 LayoutChanged 也会触发，这里直接刷新保证即时性
             UpdateStickyLines();
         }
 
@@ -120,6 +133,15 @@ namespace StickyScroll
             return true;
         }
 
+        private IClassifier GetClassifier()
+        {
+            if (_classifier == null)
+            {
+                _classifier = _classifierAggregatorService.GetClassifier(_view.TextBuffer);
+            }
+            return _classifier;
+        }
+
         private void Render(IList<StickyLine> lines)
         {
             _root.Children.Clear();
@@ -127,9 +149,13 @@ namespace StickyScroll
             if (lines.Count == 0)
                 return;
 
-            // 主题颜色（Plain Text 的前景/背景）
+            // 编辑器背景（不透明，视觉上与代码区一致）
+            var background = GetBrush(EditorFormatDefinition.BackgroundBrushId, null);
+            var bgBrush = background as SolidColorBrush;
+            _root.Background = bgBrush ?? Brushes.White;
+
+            // 前景 fallback
             var foreground = GetBrush(EditorFormatDefinition.ForegroundBrushId, Brushes.Gray);
-            var background = GetBrush(EditorFormatDefinition.BackgroundBrushId, Brushes.White);
 
             // 字体（与编辑器一致，含缩放）
             Typeface typeface = _view.FormattedLineSource != null
@@ -139,58 +165,151 @@ namespace StickyScroll
                 ? _view.FormattedLineSource.DefaultTextProperties.FontRenderingEmSize
                 : 14.0;
 
-            var bgColor = background is SolidColorBrush solid ? solid.Color : Colors.White;
-            var bgBrush = new SolidColorBrush(Color.FromArgb(
-                (byte)(BackgroundOpacity * 255), bgColor.R, bgColor.G, bgColor.B));
-            bgBrush.Freeze();
-            _root.Background = bgBrush;
+            // 文本区左缘（与编辑器文本列对齐，实现缩进位置一致）
+            double textLeft = 0;
+            try
+            {
+                textLeft = _view.TextViewLines.FirstVisibleLine.TextLeft;
+            }
+            catch
+            {
+                // 布局未就绪时用 0
+            }
 
             double lineHeight = _view.LineHeight > 0 ? _view.LineHeight : fontSize * 1.4;
-            double separatorColor = 0.5;
+
+            var classifier = GetClassifier();
+            var formatMap = _classificationFormatMapService.GetClassificationFormatMap(_view);
 
             for (int i = 0; i < lines.Count; i++)
             {
                 var line = lines[i];
+
                 var tb = new TextBlock
                 {
-                    Text = line.Text,
                     FontFamily = typeface.FontFamily,
                     FontSize = fontSize,
                     FontStyle = typeface.Style,
                     FontWeight = typeface.Weight,
-                    Foreground = foreground,
-                    Margin = new Thickness(8 + line.IndentLength * 0.0, 0, 8, 0), // 简化缩进展示
+                    Margin = new Thickness(textLeft, 0, 0, 0),  // 与编辑器文本列对齐（缩进位置一致）
+                    Padding = new Thickness(0),
                     VerticalAlignment = VerticalAlignment.Center,
-                    ToolTip = "Sticky scroll: " + line.Text,
                     TextTrimming = TextTrimming.CharacterEllipsis,
-                    Cursor = Cursors.Hand
+                    Cursor = Cursors.Hand,
+                    ToolTip = "Sticky scroll: " + line.Text.Trim()
                 };
-                if (i > 0)
-                {
-                    // 行间细分割线
-                    var sep = new Border
-                    {
-                        Height = 1,
-                        Background = new SolidColorBrush(Color.FromRgb(
-                            (byte)(bgColor.R * separatorColor + 128 * (1 - separatorColor)),
-                            (byte)(bgColor.G * separatorColor + 128 * (1 - separatorColor)),
-                            (byte)(bgColor.B * separatorColor + 128 * (1 - separatorColor))))
-                    };
-                    _root.Children.Add(sep);
-                }
+
+                // 语法高亮：分类器对原行文本着色（与原代码渲染一致）
+                AppendClassifiedRuns(tb, line, classifier, formatMap, foreground);
 
                 int targetLine = line.LineNumber;
                 tb.MouseLeftButtonUp += (s, e2) => ScrollToLine(targetLine);
                 tb.MouseEnter += (s, e2) =>
                 {
-                    var hover = new SolidColorBrush(Color.FromArgb(60, 128, 128, 128));
+                    var hover = new SolidColorBrush(Color.FromArgb(48, 128, 128, 128));
                     hover.Freeze();
                     tb.Background = hover;
                 };
                 tb.MouseLeave += (s, e2) => tb.Background = null;
 
                 _root.Children.Add(tb);
+
+                if (i < lines.Count - 1)
+                {
+                    // 粘滞行之间的细分隔线（比编辑器网格线略深）
+                    var sep = new Border
+                    {
+                        Height = 1,
+                        Background = DeriveSeparatorBrush(bgBrush ?? Brushes.White)
+                    };
+                    _root.Children.Add(sep);
+                }
             }
+
+            // 粘滞栏与代码区之间的底部分隔线
+            _root.Children.Add(new Border
+            {
+                Height = 1,
+                Background = DeriveSeparatorBrush(bgBrush ?? Brushes.White)
+            });
+        }
+
+        /// <summary>
+        /// 用分类器对行文本着色，追加 Runs 到 TextBlock；无分类结果时用纯前景色。
+        /// </summary>
+        private void AppendClassifiedRuns(TextBlock tb, StickyLine line, IClassifier classifier,
+            IClassificationFormatMap formatMap, Brush fallbackForeground)
+        {
+            if (classifier == null || formatMap == null)
+            {
+                tb.Text = line.Text;
+                tb.Foreground = fallbackForeground;
+                return;
+            }
+
+            try
+            {
+                var snapshot = _view.TextSnapshot;
+                if (line.LineNumber >= snapshot.LineCount)
+                {
+                    tb.Text = line.Text;
+                    tb.Foreground = fallbackForeground;
+                    return;
+                }
+                var snapshotLine = snapshot.GetLineFromLineNumber(line.LineNumber);
+                var spans = classifier.GetClassificationSpans(snapshotLine.Extent);
+
+                if (spans == null || spans.Count == 0)
+                {
+                    tb.Text = line.Text;
+                    tb.Foreground = fallbackForeground;
+                    return;
+                }
+
+                int pos = 0;
+                foreach (var span in spans.OrderBy(s => s.Span.Start.Position))
+                {
+                    int start = span.Span.Start.Position - snapshotLine.Start.Position;
+                    int length = span.Span.Length;
+                    if (length <= 0)
+                        continue;
+
+                    if (start > pos)
+                        tb.Inlines.Add(new Run(line.Text.Substring(pos, start - pos)) { Foreground = fallbackForeground });
+
+                    var props = formatMap.GetTextProperties(span.ClassificationType);
+                    var run = new Run(line.Text.Substring(start, length))
+                    {
+                        Foreground = props.ForegroundBrush ?? fallbackForeground
+                    };
+                    if (props.Bold)
+                        run.FontWeight = FontWeights.Bold;
+                    tb.Inlines.Add(run);
+
+                    pos = start + length;
+                }
+
+                if (pos < line.Text.Length)
+                    tb.Inlines.Add(new Run(line.Text.Substring(pos)) { Foreground = fallbackForeground });
+            }
+            catch
+            {
+                // 分类失败时退化为纯文本
+                tb.Text = line.Text;
+                tb.Foreground = fallbackForeground;
+            }
+        }
+
+        /// <summary>
+        /// 根据编辑器背景色派生分隔线颜色（背景暗则亮线，背景亮则暗线）。
+        /// </summary>
+        private static Brush DeriveSeparatorBrush(SolidColorBrush background)
+        {
+            var c = background.Color;
+            byte target = (byte)((c.R + c.G + c.B) / 3 > 128 ? 60 : 220);
+            var brush = new SolidColorBrush(Color.FromRgb(target, target, target));
+            brush.Freeze();
+            return brush;
         }
 
         private void ScrollToLine(int lineNumber)

@@ -24,10 +24,21 @@ namespace StickyScroll
         [Import]
         internal IEditorFormatMapService EditorFormatMapService { get; set; }
 
+        [Import]
+        internal IClassifierAggregatorService ClassifierAggregatorService { get; set; }
+
+        [Import]
+        internal IClassificationFormatMapService ClassificationFormatMapService { get; set; }
+
         public IWpfTextViewMargin CreateMargin(IWpfTextViewHost textViewHost, IWpfTextViewMargin containerMargin)
         {
             var formatMap = EditorFormatMapService.GetEditorFormatMap(textViewHost.TextView);
-            return new StickyScrollMargin(textViewHost, new StickyLineProvider(OutliningManagerService), formatMap);
+            return new StickyScrollMargin(
+                textViewHost,
+                new StickyLineProvider(OutliningManagerService),
+                formatMap,
+                ClassifierAggregatorService,
+                ClassificationFormatMapService);
         }
     }
 }
