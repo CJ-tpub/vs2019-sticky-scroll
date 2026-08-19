@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -26,6 +27,7 @@ namespace StickyScroll
         private const int DefaultMaxLines = 3;
 
         private readonly IWpfTextView _view;
+        private readonly IWpfTextViewHost _textViewHost;
         private readonly StickyLineProvider _stickyLineProvider;
         private readonly IEditorFormatMap _editorFormatMap;
         private readonly IClassifierAggregatorService _classifierAggregatorService;
@@ -36,8 +38,9 @@ namespace StickyScroll
         // 分类器（按 buffer 缓存）
         private IClassifier _classifier;
 
-        // 最近一次渲染的链（用于避免无谓重绘）
+        // 最近一次渲染的链与文本左缘（用于避免无谓重绘；TextLeft 变化也触发重绘）
         private IList<StickyLine> _lastLines = new StickyLine[0];
+        private double _lastTextLeft = double.NaN;
 
         public StickyScrollMargin(
             IWpfTextViewHost textViewHost,
@@ -47,6 +50,7 @@ namespace StickyScroll
             IClassificationFormatMapService classificationFormatMapService)
         {
             _view = textViewHost.TextView;
+            _textViewHost = textViewHost;
             _stickyLineProvider = stickyLineProvider;
             _editorFormatMap = editorFormatMap;
             _classifierAggregatorService = classifierAggregatorService;
@@ -55,7 +59,7 @@ namespace StickyScroll
             _root = new StackPanel
             {
                 Orientation = Orientation.Vertical,
-                ClipToBounds = true,
+                ClipToBounds = false,   // 行号列需要绘制到 margin 左侧（行号 margin 区域）
                 Focusable = false
             };
 
@@ -113,10 +117,22 @@ namespace StickyScroll
 
             var lines = _stickyLineProvider.GetStickyLines(_view, firstVisibleLineNumber, DefaultMaxLines);
 
-            // 避免无谓重绘：链相同则跳过
-            if (SameChain(_lastLines, lines))
+            // 文本区左缘（与编辑器文本列对齐；水平滚动时变化）
+            double textLeft = 0;
+            try
+            {
+                textLeft = firstLine.TextLeft;
+            }
+            catch
+            {
+                // 布局未就绪时用 0
+            }
+
+            // 避免无谓重绘：链相同且文本左缘未变则跳过
+            if (SameChain(_lastLines, lines) && Math.Abs(_lastTextLeft - textLeft) < 0.5)
                 return;
             _lastLines = lines;
+            _lastTextLeft = textLeft;
 
             Render(lines);
         }
@@ -149,34 +165,44 @@ namespace StickyScroll
             if (lines.Count == 0)
                 return;
 
-            // 编辑器背景（不透明，视觉上与代码区一致）
-            var background = GetBrush(EditorFormatDefinition.BackgroundBrushId, null);
-            var bgBrush = background as SolidColorBrush;
-            _root.Background = bgBrush ?? Brushes.White;
+            // 背景：浅蓝色（与编辑器白色背景区分；深色主题自动派生蓝灰色调）
+            var background = GetBrush(EditorFormatDefinition.BackgroundBrushId, null) as SolidColorBrush;
+            _root.Background = MakeLightBlue(background);
 
             // 前景 fallback
             var foreground = GetBrush(EditorFormatDefinition.ForegroundBrushId, Brushes.Gray);
 
-            // 字体（与编辑器一致，含缩放）
-            Typeface typeface = _view.FormattedLineSource != null
-                ? _view.FormattedLineSource.DefaultTextProperties.Typeface
-                : new Typeface("Consolas");
-            double fontSize = _view.FormattedLineSource != null
-                ? _view.FormattedLineSource.DefaultTextProperties.FontRenderingEmSize
+            // 字体：与编辑器完全一致（DefaultTextProperties 为未缩放基准，乘 ZoomLevel 得到实际渲染大小）
+            var defaultProps = _view.FormattedLineSource != null
+                ? _view.FormattedLineSource.DefaultTextProperties
+                : null;
+            Typeface typeface = defaultProps != null ? defaultProps.Typeface : new Typeface("Consolas");
+            double zoom = _view.ZoomLevel > 0 ? _view.ZoomLevel : 100.0;
+            double fontSize = defaultProps != null
+                ? defaultProps.FontRenderingEmSize * zoom / 100.0
                 : 14.0;
 
-            // 文本区左缘（与编辑器文本列对齐，实现缩进位置一致）
-            double textLeft = 0;
+            // 行高：与编辑器文本行一致，略微拉高（更舒展）
+            double lineHeight = _view.LineHeight > 0 ? _view.LineHeight : fontSize * 1.4;
+            double rowHeight = lineHeight * 1.12;
+
+            // Tab 宽度（编辑器设置，用于前导 Tab 展开对齐）
+            int tabSize = 4;
             try
             {
-                textLeft = _view.TextViewLines.FirstVisibleLine.TextLeft;
+                tabSize = _view.Options.GetOptionValue<int>(DefaultOptions.TabSizeOptionId);
             }
             catch
             {
-                // 布局未就绪时用 0
+                // 默认 4
             }
 
-            double lineHeight = _view.LineHeight > 0 ? _view.LineHeight : fontSize * 1.4;
+            // 行号列宽：与编辑器行号 margin 完全一致（用户关闭行号时为 0，不显示行号）
+            double lineNumberWidth = GetLineNumberMarginWidth(fontSize);
+
+            // 行号颜色：与编辑器行号近似的灰色
+            var lineNumberBrush = new SolidColorBrush(Color.FromRgb(0x6D, 0x6D, 0x6D));
+            lineNumberBrush.Freeze();
 
             var classifier = GetClassifier();
             var formatMap = _classificationFormatMapService.GetClassificationFormatMap(_view);
@@ -185,64 +211,159 @@ namespace StickyScroll
             {
                 var line = lines[i];
 
+                // 每行 = [行号列][文本列]，行号列宽与编辑器行号 margin 一致；固定行高（拉高更舒展）
+                var grid = new Grid
+                {
+                    Height = rowHeight
+                };
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(lineNumberWidth) });
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                // 行号：绘制在行号 margin 区域内（margin 左缘左侧），数字右缘 = 行号 margin 右缘 = 编辑器行号数字右缘
+                var ln = new TextBlock
+                {
+                    Text = (line.LineNumber + 1).ToString(),
+                    FontFamily = typeface.FontFamily,
+                    FontSize = fontSize,
+                    FontStyle = typeface.Style,
+                    FontWeight = typeface.Weight,
+                    Foreground = lineNumberBrush,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Width = lineNumberWidth,
+                    Margin = new Thickness(-lineNumberWidth, 0, 0, 0),
+                    TextAlignment = TextAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                Grid.SetColumn(ln, 0);
+
+                // 代码文本（文本列起点 = 编辑器文本左缘）
                 var tb = new TextBlock
                 {
                     FontFamily = typeface.FontFamily,
                     FontSize = fontSize,
                     FontStyle = typeface.Style,
                     FontWeight = typeface.Weight,
-                    Margin = new Thickness(textLeft, 0, 0, 0),  // 与编辑器文本列对齐（缩进位置一致）
+                    Margin = new Thickness(Math.Max(0, _lastTextLeft - lineNumberWidth), 0, 0, 0),
                     Padding = new Thickness(0),
                     VerticalAlignment = VerticalAlignment.Center,
                     TextTrimming = TextTrimming.CharacterEllipsis,
                     Cursor = Cursors.Hand,
-                    ToolTip = "Sticky scroll: " + line.Text.Trim()
+                    ToolTip = "Sticky scroll: line " + (line.LineNumber + 1) + ": " + line.Text.Trim()
                 };
+                Grid.SetColumn(tb, 1);
+
+                // 前导 Tab 按编辑器 TabSize 展开为空格（TextBlock 的 Tab 宽度与编辑器不一致，必须展开）
+                string displayText = ExpandLeadingTabs(line.Text, tabSize);
 
                 // 语法高亮：分类器对原行文本着色（与原代码渲染一致）
-                AppendClassifiedRuns(tb, line, classifier, formatMap, foreground);
+                AppendClassifiedRuns(tb, line, displayText, classifier, formatMap, foreground);
 
                 int targetLine = line.LineNumber;
-                tb.MouseLeftButtonUp += (s, e2) => ScrollToLine(targetLine);
-                tb.MouseEnter += (s, e2) =>
+                grid.MouseLeftButtonUp += (s, e2) => ScrollToLine(targetLine);
+                grid.MouseEnter += (s, e2) =>
                 {
                     var hover = new SolidColorBrush(Color.FromArgb(48, 128, 128, 128));
                     hover.Freeze();
-                    tb.Background = hover;
+                    grid.Background = hover;
                 };
-                tb.MouseLeave += (s, e2) => tb.Background = null;
+                grid.MouseLeave += (s, e2) => grid.Background = null;
 
-                _root.Children.Add(tb);
-
-                if (i < lines.Count - 1)
-                {
-                    // 粘滞行之间的细分隔线（比编辑器网格线略深）
-                    var sep = new Border
-                    {
-                        Height = 1,
-                        Background = DeriveSeparatorBrush(bgBrush ?? Brushes.White)
-                    };
-                    _root.Children.Add(sep);
-                }
+                grid.Children.Add(ln);
+                grid.Children.Add(tb);
+                _root.Children.Add(grid);
             }
 
-            // 粘滞栏与代码区之间的底部分隔线
-            _root.Children.Add(new Border
+            // 粘滞栏与代码区之间：一条很细的黑线（不太明显）
+            var bottomLine = new SolidColorBrush(Color.FromArgb(110, 0, 0, 0));
+            bottomLine.Freeze();
+            _root.Children.Add(new Border { Height = 1, Background = bottomLine });
+        }
+
+        /// <summary>
+        /// 编辑器行号 margin 的宽度；拿不到时按行号位数估算（行号关闭时为 0）。
+        /// </summary>
+        private double GetLineNumberMarginWidth(double fontSize)
+        {
+            try
             {
-                Height = 1,
-                Background = DeriveSeparatorBrush(bgBrush ?? Brushes.White)
-            });
+                var m = _textViewHost.GetTextViewMargin(PredefinedMarginNames.LineNumber);
+                if (m != null)
+                {
+                    double w = m.VisualElement.ActualWidth;
+                    if (w <= 0)
+                        w = m.VisualElement.DesiredSize.Width;
+                    if (w > 0)
+                        return w;
+                }
+            }
+            catch
+            {
+                // fallthrough
+            }
+
+            // fallback：按位数估算（2 位行号 + padding）
+            double charWidth = fontSize * 0.6;
+            return 4 * charWidth + 12;
+        }
+
+        /// <summary>
+        /// 浅蓝色背景：编辑器背景色与中蓝色按 8:2 混合（浅色主题=浅蓝，深色主题=蓝灰）。
+        /// </summary>
+        private static Brush MakeLightBlue(SolidColorBrush editorBackground)
+        {
+            Color bg = editorBackground != null ? editorBackground.Color : Colors.White;
+            var brush = new SolidColorBrush(Color.FromRgb(
+                (byte)(bg.R * 0.8 + 0x7A * 0.2),
+                (byte)(bg.G * 0.8 + 0xA7 * 0.2),
+                (byte)(bg.B * 0.8 + 0xD8 * 0.2)));
+            brush.Freeze();
+            return brush;
+        }
+
+        /// <summary>
+        /// 把行首的 Tab 展开为空格（按编辑器 TabSize 对齐制表位），保证与编辑器内缩进列一致。
+        /// 返回展开后的完整文本。
+        /// </summary>
+        private static string ExpandLeadingTabs(string text, int tabSize)
+        {
+            if (text.Length == 0 || tabSize < 1)
+                return text;
+            int i = 0;
+            while (i < text.Length && (text[i] == ' ' || text[i] == '\t'))
+                i++;
+            if (i == 0)
+                return text;
+
+            var sb = new StringBuilder(text.Length + 8);
+            int col = 0;
+            for (int j = 0; j < i; j++)
+            {
+                if (text[j] == '\t')
+                {
+                    int spaces = tabSize - (col % tabSize);
+                    sb.Append(' ', spaces);
+                    col += spaces;
+                }
+                else
+                {
+                    sb.Append(' ');
+                    col++;
+                }
+            }
+            sb.Append(text, i, text.Length - i);
+            return sb.ToString();
         }
 
         /// <summary>
         /// 用分类器对行文本着色，追加 Runs 到 TextBlock；无分类结果时用纯前景色。
+        /// displayText 为前导 Tab 展开后的显示文本；分类 spans 基于原始快照行（位置整体平移 expansion）。
         /// </summary>
-        private void AppendClassifiedRuns(TextBlock tb, StickyLine line, IClassifier classifier,
+        private void AppendClassifiedRuns(TextBlock tb, StickyLine line, string displayText, IClassifier classifier,
             IClassificationFormatMap formatMap, Brush fallbackForeground)
         {
             if (classifier == null || formatMap == null)
             {
-                tb.Text = line.Text;
+                tb.Text = displayText;
                 tb.Foreground = fallbackForeground;
                 return;
             }
@@ -252,7 +373,7 @@ namespace StickyScroll
                 var snapshot = _view.TextSnapshot;
                 if (line.LineNumber >= snapshot.LineCount)
                 {
-                    tb.Text = line.Text;
+                    tb.Text = displayText;
                     tb.Foreground = fallbackForeground;
                     return;
                 }
@@ -261,10 +382,13 @@ namespace StickyScroll
 
                 if (spans == null || spans.Count == 0)
                 {
-                    tb.Text = line.Text;
+                    tb.Text = displayText;
                     tb.Foreground = fallbackForeground;
                     return;
                 }
+
+                // 前导 Tab 展开导致的长度差（分类 span 位置整体平移）
+                int expansion = displayText.Length - line.Text.Length;
 
                 int pos = 0;
                 foreach (var span in spans.OrderBy(s => s.Span.Start.Position))
@@ -274,11 +398,12 @@ namespace StickyScroll
                     if (length <= 0)
                         continue;
 
-                    if (start > pos)
-                        tb.Inlines.Add(new Run(line.Text.Substring(pos, start - pos)) { Foreground = fallbackForeground });
+                    int dStart = start + expansion;
+                    if (dStart > pos)
+                        tb.Inlines.Add(new Run(displayText.Substring(pos, dStart - pos)) { Foreground = fallbackForeground });
 
                     var props = formatMap.GetTextProperties(span.ClassificationType);
-                    var run = new Run(line.Text.Substring(start, length))
+                    var run = new Run(displayText.Substring(dStart, length))
                     {
                         Foreground = props.ForegroundBrush ?? fallbackForeground
                     };
@@ -286,30 +411,18 @@ namespace StickyScroll
                         run.FontWeight = FontWeights.Bold;
                     tb.Inlines.Add(run);
 
-                    pos = start + length;
+                    pos = dStart + length;
                 }
 
-                if (pos < line.Text.Length)
-                    tb.Inlines.Add(new Run(line.Text.Substring(pos)) { Foreground = fallbackForeground });
+                if (pos < displayText.Length)
+                    tb.Inlines.Add(new Run(displayText.Substring(pos)) { Foreground = fallbackForeground });
             }
             catch
             {
                 // 分类失败时退化为纯文本
-                tb.Text = line.Text;
+                tb.Text = displayText;
                 tb.Foreground = fallbackForeground;
             }
-        }
-
-        /// <summary>
-        /// 根据编辑器背景色派生分隔线颜色（背景暗则亮线，背景亮则暗线）。
-        /// </summary>
-        private static Brush DeriveSeparatorBrush(SolidColorBrush background)
-        {
-            var c = background.Color;
-            byte target = (byte)((c.R + c.G + c.B) / 3 > 128 ? 60 : 220);
-            var brush = new SolidColorBrush(Color.FromRgb(target, target, target));
-            brush.Freeze();
-            return brush;
         }
 
         private void ScrollToLine(int lineNumber)
