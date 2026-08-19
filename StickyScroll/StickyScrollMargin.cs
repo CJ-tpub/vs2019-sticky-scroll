@@ -38,9 +38,11 @@ namespace StickyScroll
         // 分类器（按 buffer 缓存）
         private IClassifier _classifier;
 
-        // 最近一次渲染的链与文本左缘（用于避免无谓重绘；TextLeft 变化也触发重绘）
+        // 最近一次渲染的链与渲染度量（缩放/行号列宽/文本左缘变化时强制重绘）
         private IList<StickyLine> _lastLines = new StickyLine[0];
         private double _lastTextLeft = double.NaN;
+        private double _lastZoom = double.NaN;
+        private double _lastLineNumberWidth = double.NaN;
 
         public StickyScrollMargin(
             IWpfTextViewHost textViewHost,
@@ -117,7 +119,9 @@ namespace StickyScroll
 
             var lines = _stickyLineProvider.GetStickyLines(_view, firstVisibleLineNumber, DefaultMaxLines);
 
-            // 文本区左缘（与编辑器文本列对齐；水平滚动时变化）
+            // 渲染度量：缩放级别、文本区左缘、行号列宽——任何一项变化都必须重绘（缩放跟随）
+            double zoom = _view.ZoomLevel > 0 ? _view.ZoomLevel : 100.0;
+
             double textLeft = 0;
             try
             {
@@ -125,14 +129,23 @@ namespace StickyScroll
             }
             catch
             {
-                // 布局未就绪时用 0
+                // 布局未就绪：文本左缘未知，用行号列宽 + 少量 padding 兜底
             }
 
-            // 避免无谓重绘：链相同且文本左缘未变则跳过
-            if (SameChain(_lastLines, lines) && Math.Abs(_lastTextLeft - textLeft) < 0.5)
+            double lineNumberWidth = GetLineNumberMarginWidth(textLeft);
+
+            bool metricsChanged =
+                Math.Abs(_lastZoom - zoom) > 0.01 ||
+                Math.Abs(_lastTextLeft - textLeft) > 0.5 ||
+                Math.Abs(_lastLineNumberWidth - lineNumberWidth) > 0.5;
+
+            // 避免无谓重绘：链相同且渲染度量未变则跳过
+            if (SameChain(_lastLines, lines) && !metricsChanged)
                 return;
             _lastLines = lines;
+            _lastZoom = zoom;
             _lastTextLeft = textLeft;
+            _lastLineNumberWidth = lineNumberWidth;
 
             Render(lines);
         }
@@ -198,7 +211,7 @@ namespace StickyScroll
             }
 
             // 行号列宽：与编辑器行号 margin 完全一致（用户关闭行号时为 0，不显示行号）
-            double lineNumberWidth = GetLineNumberMarginWidth(fontSize);
+            double lineNumberWidth = _lastLineNumberWidth;
 
             // 行号颜色：与编辑器行号近似的灰色
             var lineNumberBrush = new SolidColorBrush(Color.FromRgb(0x6D, 0x6D, 0x6D));
@@ -219,7 +232,7 @@ namespace StickyScroll
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(lineNumberWidth) });
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-                // 行号：绘制在行号 margin 区域内（margin 左缘左侧），数字右缘 = 行号 margin 右缘 = 编辑器行号数字右缘
+                // 行号：绘制在行号 margin 区域内（margin 左缘左侧），数字右缘比 margin 左缘略靠左 2px（对齐编辑器行号数字）
                 var ln = new TextBlock
                 {
                     Text = (line.LineNumber + 1).ToString(),
@@ -230,7 +243,7 @@ namespace StickyScroll
                     Foreground = lineNumberBrush,
                     HorizontalAlignment = HorizontalAlignment.Left,
                     Width = lineNumberWidth,
-                    Margin = new Thickness(-lineNumberWidth, 0, 0, 0),
+                    Margin = new Thickness(-lineNumberWidth - 2, 0, 0, 0),
                     TextAlignment = TextAlignment.Right,
                     VerticalAlignment = VerticalAlignment.Center
                 };
@@ -280,9 +293,10 @@ namespace StickyScroll
         }
 
         /// <summary>
-        /// 编辑器行号 margin 的宽度；拿不到时按行号位数估算（行号关闭时为 0）。
+        /// 编辑器行号 margin 的宽度（精确获取）；拿不到时用文本左缘作为行号区宽度
+        /// （行号数字右缘贴近文本左缘，绝不超出窗口左侧）。
         /// </summary>
-        private double GetLineNumberMarginWidth(double fontSize)
+        private double GetLineNumberMarginWidth(double textLeft)
         {
             try
             {
@@ -301,9 +315,8 @@ namespace StickyScroll
                 // fallthrough
             }
 
-            // fallback：按位数估算（2 位行号 + padding）
-            double charWidth = fontSize * 0.6;
-            return 4 * charWidth + 12;
+            // fallback：以文本左缘为行号区宽度（数字右缘 = textLeft - 4，紧贴文本列）
+            return textLeft > 4 ? textLeft - 4 : 32;
         }
 
         /// <summary>
