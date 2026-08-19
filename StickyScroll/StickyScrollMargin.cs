@@ -38,9 +38,10 @@ namespace StickyScroll
         // 分类器（按 buffer 缓存）
         private IClassifier _classifier;
 
-        // 最近一次渲染的链与渲染度量（缩放/行号列宽/文本左缘变化时强制重绘）
+        // 最近一次渲染的链与渲染度量（缩放/文本列/行号区位置变化时强制重绘）
         private IList<StickyLine> _lastLines = new StickyLine[0];
-        private double _lastTextLeft = double.NaN;
+        private double _lastTextColumn = double.NaN;        // 编辑器文本左缘（margin 坐标）
+        private double _lastLineNumberRegion = double.NaN;  // 行号区右缘（margin 坐标）
         private double _lastZoom = double.NaN;
         private double _lastLineNumberWidth = double.NaN;
 
@@ -70,6 +71,13 @@ namespace StickyScroll
             _view.TextBuffer.Changed += OnTextBufferChanged;
             _view.Closed += OnViewClosed;
             _editorFormatMap.FormatMappingChanged += OnFormatMappingChanged;
+            // 布局完全稳定后重新实测几何（TranslatePoint 在布局中间态读数会偏差，收敛到最终对齐）
+            _root.LayoutUpdated += OnRootLayoutUpdated;
+        }
+
+        private void OnRootLayoutUpdated(object sender, EventArgs e)
+        {
+            UpdateStickyLines();
         }
 
         // ---------------- 事件处理 ----------------
@@ -132,11 +140,21 @@ namespace StickyScroll
                 // 布局未就绪：文本左缘未知，用行号列宽 + 少量 padding 兜底
             }
 
-            double lineNumberWidth = GetLineNumberMarginWidth(textLeft);
+            double lineNumberWidth = GetLineNumberMarginWidth();
+
+            // 行号区右缘（margin 坐标）= 行号 margin 起点 + 宽度（行号 margin 前可能还有 outlining 等左 margin）
+            double lineNumberRegion = lineNumberWidth;
+            double lineNumberOrigin = GetLineNumberOriginInMargin();
+            if (lineNumberOrigin > 0)
+                lineNumberRegion = lineNumberOrigin + lineNumberWidth;
+
+            // 编辑器文本左缘（margin 坐标）= 视口原点（margin 坐标）+ 文本左缘
+            double textColumn = GetViewportOriginInMargin() + textLeft;
 
             bool metricsChanged =
                 Math.Abs(_lastZoom - zoom) > 0.01 ||
-                Math.Abs(_lastTextLeft - textLeft) > 0.5 ||
+                Math.Abs(_lastTextColumn - textColumn) > 0.5 ||
+                Math.Abs(_lastLineNumberRegion - lineNumberRegion) > 0.5 ||
                 Math.Abs(_lastLineNumberWidth - lineNumberWidth) > 0.5;
 
             // 避免无谓重绘：链相同且渲染度量未变则跳过
@@ -144,11 +162,101 @@ namespace StickyScroll
                 return;
             _lastLines = lines;
             _lastZoom = zoom;
-            _lastTextLeft = textLeft;
+            _lastTextColumn = textColumn;
+            _lastLineNumberRegion = lineNumberRegion;
             _lastLineNumberWidth = lineNumberWidth;
+
+            if (_metricsChangedSinceLog)
+            {
+                _metricsChangedSinceLog = false;
+                LogGeometry(textLeft, lineNumberWidth, zoom, lineNumberRegion, textColumn);
+            }
 
             Render(lines);
         }
+
+        /// <summary>
+        /// 行号 margin 起点（margin 坐标；其左侧可能还有 outlining 等左 margin，取不到时视为 0）。
+        /// </summary>
+        private double GetLineNumberOriginInMargin()
+        {
+            try
+            {
+                var m = _textViewHost.GetTextViewMargin(PredefinedMarginNames.LineNumber);
+                if (m != null)
+                    return m.VisualElement.TranslatePoint(new System.Windows.Point(0, 0), _root).X;
+            }
+            catch { }
+            return 0;
+        }
+
+        /// <summary>
+        /// 视口原点（margin 坐标）= 视口元素左上角在 margin 坐标系中的 X。
+        /// </summary>
+        private double GetViewportOriginInMargin()
+        {
+            try
+            {
+                return _view.VisualElement.TranslatePoint(new System.Windows.Point(0, 0), _root).X;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private bool _metricsChangedSinceLog = true;
+
+        /// <summary>
+        /// 几何诊断日志（%TEMP%\sticky-geom.log）：输出 margin/视口/行号 margin 的真实坐标关系。
+        /// </summary>
+        private void LogGeometry(double textLeft, double lineNumberWidth, double zoom, double lineNumberRegion, double textColumn)
+        {
+            try
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine("---- geometry ----");
+                sb.AppendLine("zoom=" + zoom.ToString("F1") + " textLeft=" + textLeft.ToString("F1") +
+                    " lineNumberWidth=" + lineNumberWidth.ToString("F1") +
+                    " lineNumberRegion=" + lineNumberRegion.ToString("F1") +
+                    " textColumnInMargin=" + textColumn.ToString("F1"));
+
+                // 行号 margin 探测
+                foreach (var name in LineNumberMarginNames)
+                {
+                    try
+                    {
+                        var m = _textViewHost.GetTextViewMargin(name);
+                        if (m != null)
+                        {
+                            sb.AppendLine("margin '" + name + "' hit: actualW=" + m.VisualElement.ActualWidth.ToString("F1") +
+                                " originInMargin=" + m.VisualElement.TranslatePoint(new System.Windows.Point(0, 0), _root).X.ToString("F1"));
+                        }
+                    }
+                    catch { }
+                }
+
+                // 行高来源
+                sb.AppendLine("view.LineHeight=" + _view.LineHeight.ToString("F2") +
+                    " formattedLineSource.LineHeight=" + (_view.FormattedLineSource != null ? _view.FormattedLineSource.LineHeight.ToString("F2") : "null"));
+
+                System.IO.File.AppendAllText(
+                    System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sticky-geom.log"),
+                    sb.ToString());
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
+        // 行号 margin 的候选名字（VS 内部注册名不确定，逐个探测）
+        private static readonly string[] LineNumberMarginNames =
+        {
+            PredefinedMarginNames.LineNumber,
+            "LineNumberMargin",
+            "Microsoft.VisualStudio.Text.Editor.LineNumberMargin"
+        };
 
         private static bool SameChain(IList<StickyLine> a, IList<StickyLine> b)
         {
@@ -195,8 +303,21 @@ namespace StickyScroll
                 ? defaultProps.FontRenderingEmSize * zoom / 100.0
                 : 14.0;
 
-            // 行高：与编辑器文本行一致，略微拉高（更舒展）
-            double lineHeight = _view.LineHeight > 0 ? _view.LineHeight : fontSize * 1.4;
+            // 行高：按"未缩放行高/未缩放字号"的比例随缩放同步（行高系数 ~1.36）
+            double lineHeightFactor = 1.4;
+            double baseFontSize = defaultProps != null ? defaultProps.FontRenderingEmSize : 14.0;
+            double baseLineHeight = 0;
+            try
+            {
+                if (_view.FormattedLineSource != null)
+                    baseLineHeight = _view.FormattedLineSource.LineHeight;
+            }
+            catch { }
+            if (baseLineHeight <= 0)
+                baseLineHeight = _view.LineHeight;
+            if (baseLineHeight > 0 && baseFontSize > 0)
+                lineHeightFactor = baseLineHeight / baseFontSize;
+            double lineHeight = fontSize * lineHeightFactor;
             double rowHeight = lineHeight * 1.12;
 
             // Tab 宽度（编辑器设置，用于前导 Tab 展开对齐）
@@ -213,6 +334,10 @@ namespace StickyScroll
             // 行号列宽：与编辑器行号 margin 完全一致（用户关闭行号时为 0，不显示行号）
             double lineNumberWidth = _lastLineNumberWidth;
 
+            // 行号区右缘与编辑器文本左缘（margin 坐标，由 UpdateStickyLines 实测几何得出）
+            double lineNumberRegion = _lastLineNumberRegion;
+            double textColumnInMargin = _lastTextColumn;
+
             // 行号颜色：与编辑器行号近似的灰色
             var lineNumberBrush = new SolidColorBrush(Color.FromRgb(0x6D, 0x6D, 0x6D));
             lineNumberBrush.Freeze();
@@ -224,15 +349,15 @@ namespace StickyScroll
             {
                 var line = lines[i];
 
-                // 每行 = [行号列][文本列]，行号列宽与编辑器行号 margin 一致；固定行高（拉高更舒展）
+                // 每行 = [行号区][文本列]；行号区覆盖行号 margin（含其左侧的 outlining 等），固定行高（拉高更舒展）
                 var grid = new Grid
                 {
                     Height = rowHeight
                 };
-                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(lineNumberWidth) });
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(lineNumberRegion) });
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-                // 行号：绘制在行号 margin 区域内（margin 左缘左侧），数字右缘比 margin 左缘略靠左 2px（对齐编辑器行号数字）
+                // 行号：行号区内右对齐（数字右缘与编辑器行号数字同位）
                 var ln = new TextBlock
                 {
                     Text = (line.LineNumber + 1).ToString(),
@@ -241,22 +366,20 @@ namespace StickyScroll
                     FontStyle = typeface.Style,
                     FontWeight = typeface.Weight,
                     Foreground = lineNumberBrush,
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    Width = lineNumberWidth,
-                    Margin = new Thickness(-lineNumberWidth - 2, 0, 0, 0),
-                    TextAlignment = TextAlignment.Right,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Margin = new Thickness(0, 0, 2, 0),
                     VerticalAlignment = VerticalAlignment.Center
                 };
                 Grid.SetColumn(ln, 0);
 
-                // 代码文本（文本列起点 = 编辑器文本左缘）
+                // 代码文本（文本列 = 编辑器文本左缘，margin 坐标）
                 var tb = new TextBlock
                 {
                     FontFamily = typeface.FontFamily,
                     FontSize = fontSize,
                     FontStyle = typeface.Style,
                     FontWeight = typeface.Weight,
-                    Margin = new Thickness(Math.Max(0, _lastTextLeft - lineNumberWidth), 0, 0, 0),
+                    Margin = new Thickness(Math.Max(0, textColumnInMargin - lineNumberRegion), 0, 0, 0),
                     Padding = new Thickness(0),
                     VerticalAlignment = VerticalAlignment.Center,
                     TextTrimming = TextTrimming.CharacterEllipsis,
@@ -293,30 +416,31 @@ namespace StickyScroll
         }
 
         /// <summary>
-        /// 编辑器行号 margin 的宽度（精确获取）；拿不到时用文本左缘作为行号区宽度
-        /// （行号数字右缘贴近文本左缘，绝不超出窗口左侧）。
+        /// 编辑器行号 margin 的宽度（精确获取）；所有候选名都拿不到时返回 0
+        /// （行号列不显示，但绝不越界；文本列对齐不受影响）。
         /// </summary>
-        private double GetLineNumberMarginWidth(double textLeft)
+        private double GetLineNumberMarginWidth()
         {
-            try
+            foreach (var name in LineNumberMarginNames)
             {
-                var m = _textViewHost.GetTextViewMargin(PredefinedMarginNames.LineNumber);
-                if (m != null)
+                try
                 {
-                    double w = m.VisualElement.ActualWidth;
-                    if (w <= 0)
-                        w = m.VisualElement.DesiredSize.Width;
-                    if (w > 0)
-                        return w;
+                    var m = _textViewHost.GetTextViewMargin(name);
+                    if (m != null)
+                    {
+                        double w = m.VisualElement.ActualWidth;
+                        if (w <= 0)
+                            w = m.VisualElement.DesiredSize.Width;
+                        if (w > 0)
+                            return w;
+                    }
+                }
+                catch
+                {
+                    // 尝试下一个名字
                 }
             }
-            catch
-            {
-                // fallthrough
-            }
-
-            // fallback：以文本左缘为行号区宽度（数字右缘 = textLeft - 4，紧贴文本列）
-            return textLeft > 4 ? textLeft - 4 : 32;
+            return 0;
         }
 
         /// <summary>
@@ -492,6 +616,7 @@ namespace StickyScroll
             _view.TextBuffer.Changed -= OnTextBufferChanged;
             _view.Closed -= OnViewClosed;
             _editorFormatMap.FormatMappingChanged -= OnFormatMappingChanged;
+            _root.LayoutUpdated -= OnRootLayoutUpdated;
             _root.Children.Clear();
         }
     }
