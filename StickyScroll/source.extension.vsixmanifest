@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
+  <Metadata>
+    <Identity Id="StickyScroll.v1" Version="1.0.0" Language="en-US" Publisher="StickyScroll" />
+    <DisplayName>Sticky Scroll</DisplayName>
+    <Description xml:space="preserve">Sticky scroll for Visual Studio 2019: keep the current code scope headers (namespace/class/method) pinned at the top of the editor while scrolling, like VS2022 / VSCode.</Description>
+    <Tags>sticky, scroll, editor, productivity</Tags>
+  </Metadata>
+  <Installation>
+    <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[16.0,17.0)" />
+    <InstallationTarget Id="Microsoft.VisualStudio.Professional" Version="[16.0,17.0)" />
+    <InstallationTarget Id="Microsoft.VisualStudio.Enterprise" Version="[16.0,17.0)" />
+  </Installation>
+  <!-- 注意：不带 Prerequisites。VSIXInstaller(17.14) 在本机对带 Prerequisites 的包会报"不是有效的 VSIX 包"（状态相关 bug）；VS2019 必有 CoreEditor，无实际风险。 -->
+  <Assets>
+    <Asset Type="Microsoft.VisualStudio.MefComponent" d:Source="File" Path="StickyScroll.dll" />
+  </Assets>
+</PackageManifest>
