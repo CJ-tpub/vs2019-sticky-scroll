@@ -15,15 +15,16 @@
 ## 安装
 
 ```bat
-D:\vs2019\Common7\IDE\VSIXInstaller.exe /q /admin StickyScroll.vsix
+<VS2019安装目录>\Common7\IDE\VSIXInstaller.exe /q /admin StickyScroll.vsix
 ```
 
+> 将 `<VS2019安装目录>` 替换为你的 VS2019 安装位置（常见：`C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional`）。
 > 需要管理员权限（UAC 确认）。装到 VS2019 机器级扩展目录。
 
 ## 卸载
 
 ```bat
-D:\vs2019\Common7\IDE\VSIXInstaller.exe /q /uninstall:StickyScroll.v1
+<VS2019安装目录>\Common7\IDE\VSIXInstaller.exe /q /uninstall:StickyScroll.v1
 ```
 
 ## 使用
@@ -43,23 +44,28 @@ MaxLines=3      # 最大粘滞行数（1-10）
 Enabled=true    # 总开关（true/false）
 ```
 
-> 说明：VS 选项页（Tools→Options）依赖 Package/pkgdef 注册链路，本机 VSIXInstaller 17.14 对 VS2019 的该链路失效（扩展本身注册正常、选项页无法注册），故采用配置文件方案，简单可靠。
+> 说明：VS 选项页（Tools→Options）依赖 Package/pkgdef 注册链路，部分 VSIXInstaller 版本对 VS2019 的该链路失效（扩展本身注册正常、选项页无法注册），故采用配置文件方案，简单可靠。
 
 ## 构建（离线，无 NuGet/VSSDK 依赖）
 
-本机环境约束：HTTPS 不通、无 VSSDK BuildTools → 采用**全离线构建**：
+本仓库支持**全离线构建**（无需 NuGet/VSSDK/网络）：
 
 ```bat
 powershell -ExecutionPolicy Bypass -File .\setup-ref.ps1   rem 一次性：从 .NET 4.8 运行时生成 v4.7.2 引用程序集
 powershell -ExecutionPolicy Bypass -File .\build.ps1 -Configuration Release
 ```
 
-产出 `StickyScroll.vsix`。
-
-**开发迭代部署**（免重装）：扩展目录已授权可写，直接覆盖 DLL 后重启 VS：
+- 产出 `StickyScroll.vsix`
+- VS 安装路径可通过参数指定（默认 `D:\vs2019`，其他机器请传参）：
 
 ```bat
-copy StickyScroll\bin\Release\StickyScroll.dll D:\vs2019\Common7\IDE\Extensions\cb2zzibj.chj\
+powershell -ExecutionPolicy Bypass -File .\build.ps1 -Configuration Release -VsIdePath "C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional"
+```
+
+**开发迭代部署**（免重装）：找到扩展安装目录（`<VS2019安装目录>\Common7\IDE\Extensions\` 下含 `extension.vsixmanifest` 且 Id 为 `StickyScroll.v1` 的目录），覆盖 DLL 后重启 VS：
+
+```bat
+copy StickyScroll\bin\Release\StickyScroll.dll <扩展目录>\
 ```
 
 ## 工程结构
