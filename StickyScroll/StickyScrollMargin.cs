@@ -387,12 +387,12 @@ namespace StickyScroll
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(lineNumberRegion) });
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-                // 行号：数字右缘 = 编辑器行号数字右缘（实测）；行号字体用未缩放字号（编辑器行号数字不随缩放变化）
+                // 行号：数字右缘 = 编辑器行号数字右缘（实测）；行号字体与代码文本一致（随缩放，同代码渲染逻辑）
                 var ln = new TextBlock
                 {
                     Text = (line.LineNumber + 1).ToString(),
                     FontFamily = typeface.FontFamily,
-                    FontSize = emSize,
+                    FontSize = fontSize,
                     FontStyle = typeface.Style,
                     FontWeight = typeface.Weight,
                     Foreground = lineNumberBrush,
