@@ -149,8 +149,10 @@ namespace StickyScroll
             if (lineNumberOrigin > 0)
                 lineNumberRegion = lineNumberOrigin + lineNumberWidth;
 
-            // 编辑器文本左缘（margin 坐标）= 视口原点 + 视口内容区左偏移 + 文本左缘
-            double textColumn = GetViewportOriginInMargin() + GetViewportContentLeftOffset() + textLeft;
+            // 编辑器文本左缘（margin 坐标）= 文本画布左缘（实测）+ 文本左缘 + 1.5px 渲染微调；
+            // 画布找不到时退化为 视口原点 + 文本左缘
+            double canvasLeft = GetTextViewCanvasLeftInMargin();
+            double textColumn = (canvasLeft >= 0 ? canvasLeft : GetViewportOriginInMargin()) + textLeft + 1.5;
 
             // 编辑器行号数字右缘：行号 margin 元素右缘的 TranslatePoint 实测
             // （VS 行号内容随缩放变换放大，实测自动含缩放；100% 时 = margin 左缘 + 宽）
@@ -257,18 +259,47 @@ namespace StickyScroll
         }
 
         /// <summary>
-        /// 视口元素内容区相对其左上角的左偏移（Border 的 BorderThickness.Left + Padding.Left）。
-        /// 文本实际从内容区开始，不加此偏移会偏左 1~2px。
+        /// 文本行画布（Canvas）左缘（margin 坐标）：遍历视口元素视觉树找最宽的 Canvas，
+        /// 经 HostControl（共同祖先）换算到 margin 坐标系。找不到时返回 -1。
         /// </summary>
-        private double GetViewportContentLeftOffset()
+        private double GetTextViewCanvasLeftInMargin()
         {
             try
             {
-                if (_view.VisualElement is System.Windows.Controls.Border b)
-                    return b.BorderThickness.Left + b.Padding.Left;
+                var host = _textViewHost.HostControl;
+                if (host == null)
+                    return -1;
+                var canvas = FindWidestCanvas(_view.VisualElement, ref _canvasBestW);
+                if (canvas == null)
+                    return -1;
+                var pCanvas = canvas.TranslatePoint(new System.Windows.Point(0, 0), host);
+                var pRoot = _root.TranslatePoint(new System.Windows.Point(0, 0), host);
+                return pCanvas.X - pRoot.X;
             }
-            catch { }
-            return 0;
+            catch
+            {
+                return -1;
+            }
+        }
+
+        private double _canvasBestW = 0;
+
+        private static System.Windows.Controls.Canvas FindWidestCanvas(System.Windows.DependencyObject node, ref double bestW)
+        {
+            System.Windows.Controls.Canvas result = null;
+            if (node is System.Windows.Controls.Canvas c && c.ActualWidth > bestW)
+            {
+                bestW = c.ActualWidth;
+                result = c;
+            }
+            int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(node);
+            for (int i = 0; i < count; i++)
+            {
+                var r = FindWidestCanvas(System.Windows.Media.VisualTreeHelper.GetChild(node, i), ref bestW);
+                if (r != null)
+                    result = r;
+            }
+            return result;
         }
 
         /// <summary>
@@ -305,7 +336,10 @@ namespace StickyScroll
                     " lineNumberWidth=" + lineNumberWidth.ToString("F1") +
                     " lineNumberRegion=" + lineNumberRegion.ToString("F1") +
                     " lineNumberRightEdge=" + lineNumberRightEdge.ToString("F1") +
-                    " textColumnInMargin=" + textColumn.ToString("F1"));
+                    " textColumnInMargin=" + textColumn.ToString("F1") +
+                    " viewportOrigin=" + GetViewportOriginInMargin().ToString("F1") +
+                    " canvasLeft=" + GetTextViewCanvasLeftInMargin().ToString("F1") +
+                    " viewElementType=" + (_view.VisualElement != null ? _view.VisualElement.GetType().Name : "null"));
 
                 // 行号 margin 视觉树结构（定位数字元素右缘）
                 try
@@ -315,6 +349,17 @@ namespace StickyScroll
                     {
                         sb.AppendLine("-- line-number margin tree --");
                         LogNode(lnm.VisualElement, 0, sb);
+                    }
+                }
+                catch { }
+
+                // 视口元素视觉树（定位文本层）
+                try
+                {
+                    if (_view.VisualElement != null)
+                    {
+                        sb.AppendLine("-- view element tree --");
+                        LogNode(_view.VisualElement, 0, sb);
                     }
                 }
                 catch { }
