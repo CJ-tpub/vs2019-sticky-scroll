@@ -117,3 +117,17 @@ test-files/TestSticky.cs        C# test file for verification
 ## License
 
 MIT License — see [LICENSE](LICENSE).
+
+## Related / 相关资源
+
+**AI development skill** (experience distilled from building this extension): [vs2019-extension-dev-skill](https://github.com/CJ-tpub/vs2019-extension-dev-skill) — a Claude Code SKILL.md covering VS2019 extension dev workflow, APIs, offline build, VSIX packaging, debugging, testing, publishing and real-world pitfalls. Highly recommended if you plan to build VS2019 extensions with AI assistance.
+
+## Developer Notes / 开发感想
+
+This project was developed with **DeepSeek Harness + DeepSeek-V4-Flash**. Because development started after the official model price increase, it consumed more than ¥20 of official API credits.
+
+There is very little tutorial material for building VS2019 extensions, so the AI hit many walls during development. To make up for the sunk cost, I distilled all the experience (workflow, pitfalls, testing, publishing) into the [vs2019-extension-dev-skill](https://github.com/CJ-tpub/vs2019-extension-dev-skill) above, as a reference for anyone building VS2019 extensions with AI later.
+
+If you run into any issues with this extension, feel free to open an issue — I may not check GitHub very often, but when I do, I'll try to fix them.
+
+One reminder: sticky scroll is a feature introduced in **VS2022**. I built this VS2019 version only to stay consistent with the VS2019 used in my project — and it really is a handy feature.

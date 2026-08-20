@@ -117,3 +117,17 @@ test-files/TestSticky.cs        验证用 C# 测试文件
 ## 许可证
 
 MIT License — 见 [LICENSE](LICENSE)。
+
+## 相关资源
+
+**AI 开发技能**（本扩展开发经验沉淀）：[vs2019-extension-dev-skill](https://github.com/CJ-tpub/vs2019-extension-dev-skill) —— 一份 Claude Code 格式的 SKILL.md，涵盖 VS2019 扩展开发的流程、关键 API、离线构建、VSIX 打包、调试、测试、发布与全部实测避坑经验。如果你打算用 AI 辅助开发 VS2019 扩展，强烈推荐参考。
+
+## 开发感想
+
+本项目开发基于 **DeepSeek Harness + DeepSeek-V4-Flash**。由于开发于官方模型涨价之后，足足花费了二十多块钱的官方 API key。
+
+开发该扩展缺乏很多教程资料，所以开发过程中 AI 测试碰壁了很多次。为了弥补沉没成本，我把全部经验（流程、避坑、测试、发布）总结成了上面的 [vs2019-extension-dev-skill](https://github.com/CJ-tpub/vs2019-extension-dev-skill)，用作后来人用 AI 开发 VS2019 扩展时的经验参考。
+
+如果使用中有什么问题，可以给我提 issue——虽然平时可能不会经常上 GitHub 去看，如果有看，会尝试修问题。
+
+需要提醒的是：粘滞滚动是 **VS2022** 版本推出的功能，我开发 VS2019 的版本仅仅是为了与项目开发中使用的 VS2019 统一——这个功能也确实好用。
