@@ -149,8 +149,8 @@ namespace StickyScroll
             if (lineNumberOrigin > 0)
                 lineNumberRegion = lineNumberOrigin + lineNumberWidth;
 
-            // 编辑器文本左缘（margin 坐标）= 视口原点（margin 坐标）+ 文本左缘
-            double textColumn = GetViewportOriginInMargin() + textLeft;
+            // 编辑器文本左缘（margin 坐标）= 视口原点 + 视口内容区左偏移 + 文本左缘
+            double textColumn = GetViewportOriginInMargin() + GetViewportContentLeftOffset() + textLeft;
 
             // 编辑器行号数字右缘：行号 margin 元素右缘的 TranslatePoint 实测
             // （VS 行号内容随缩放变换放大，实测自动含缩放；100% 时 = margin 左缘 + 宽）
@@ -251,6 +251,21 @@ namespace StickyScroll
                 var m = _textViewHost.GetTextViewMargin(PredefinedMarginNames.LineNumber);
                 if (m != null)
                     return m.VisualElement.TranslatePoint(new System.Windows.Point(0, 0), _root).X;
+            }
+            catch { }
+            return 0;
+        }
+
+        /// <summary>
+        /// 视口元素内容区相对其左上角的左偏移（Border 的 BorderThickness.Left + Padding.Left）。
+        /// 文本实际从内容区开始，不加此偏移会偏左 1~2px。
+        /// </summary>
+        private double GetViewportContentLeftOffset()
+        {
+            try
+            {
+                if (_view.VisualElement is System.Windows.Controls.Border b)
+                    return b.BorderThickness.Left + b.Padding.Left;
             }
             catch { }
             return 0;
