@@ -45,7 +45,6 @@ namespace StickyScroll
         private double _lastLineNumberRightEdge = double.NaN; // 编辑器行号数字右缘（margin 坐标）
         private double _lastZoom = double.NaN;
         private double _lastLineNumberWidth = double.NaN;
-        private double _calibratedGap = 0;                    // 视口左缘到行号数字右缘的固定间隙（100% 时校准）
 
         public StickyScrollMargin(
             IWpfTextViewHost textViewHost,
@@ -152,37 +151,12 @@ namespace StickyScroll
 
             // 编辑器文本左缘（margin 坐标）= 视口原点（margin 坐标）+ 文本左缘
             double textColumn = GetViewportOriginInMargin() + textLeft;
-            double viewportOrigin = GetViewportOriginInMargin();
 
-            // 编辑器行号数字右缘 = 视口左缘 - 固定间隙（selection margin 等，不随缩放）。
-            // 100% 时用 region 精确校准（viewportOrigin - region 涵盖一切 padding）；否则用 selection margin 实测兜底。
-            double selectionGap = _calibratedGap;
-            if (selectionGap <= 0)
-            {
-                try
-                {
-                    var sel = _textViewHost.GetTextViewMargin(PredefinedMarginNames.LeftSelection);
-                    if (sel != null)
-                    {
-                        double w = sel.VisualElement.ActualWidth;
-                        if (w > 0)
-                            selectionGap = w + 8;
-                    }
-                }
-                catch { }
-            }
-            if (selectionGap <= 0)
-                selectionGap = 37;
-            if (Math.Abs(zoom - 100.0) < 0.5)
-            {
-                double cal = viewportOrigin - lineNumberRegion;
-                if (cal > 0)
-                {
-                    _calibratedGap = cal;
-                    selectionGap = cal;
-                }
-            }
-            double lineNumberRightEdge = viewportOrigin - selectionGap;
+            // 编辑器行号数字右缘：行号 margin 元素右缘的 TranslatePoint 实测
+            // （VS 行号内容随缩放变换放大，实测自动含缩放；100% 时 = margin 左缘 + 宽）
+            double lineNumberRightEdge = GetLineNumberRightEdgeInMargin();
+            if (lineNumberRightEdge <= 0)
+                lineNumberRightEdge = lineNumberRegion;   // 兜底：行号区右缘
 
             bool metricsChanged =
                 Math.Abs(_lastZoom - zoom) > 0.01 ||
@@ -248,6 +222,26 @@ namespace StickyScroll
         }
 
         /// <summary>
+        /// 编辑器行号数字右缘（margin 坐标）：行号 margin 元素右缘的 TranslatePoint 实测。
+        /// VS 行号内容随缩放变换放大，TranslatePoint 自动计入缩放；这是唯一与像素实测吻合的值。
+        /// </summary>
+        private double GetLineNumberRightEdgeInMargin()
+        {
+            try
+            {
+                var m = _textViewHost.GetTextViewMargin(PredefinedMarginNames.LineNumber);
+                if (m != null)
+                {
+                    double w = m.VisualElement.ActualWidth;
+                    if (w > 0)
+                        return m.VisualElement.TranslatePoint(new System.Windows.Point(w, 0), _root).X;
+                }
+            }
+            catch { }
+            return 0;
+        }
+
+        /// <summary>
         /// 行号 margin 起点（margin 坐标；其左侧可能还有 outlining 等左 margin，取不到时视为 0）。
         /// </summary>
         private double GetLineNumberOriginInMargin()
@@ -298,6 +292,18 @@ namespace StickyScroll
                     " lineNumberRightEdge=" + lineNumberRightEdge.ToString("F1") +
                     " textColumnInMargin=" + textColumn.ToString("F1"));
 
+                // 行号 margin 视觉树结构（定位数字元素右缘）
+                try
+                {
+                    var lnm = _textViewHost.GetTextViewMargin(PredefinedMarginNames.LineNumber);
+                    if (lnm != null)
+                    {
+                        sb.AppendLine("-- line-number margin tree --");
+                        LogNode(lnm.VisualElement, 0, sb);
+                    }
+                }
+                catch { }
+
                 System.IO.File.AppendAllText(
                     System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sticky-geom.log"),
                     sb.ToString());
@@ -306,6 +312,23 @@ namespace StickyScroll
             {
                 // ignore
             }
+        }
+
+        private void LogNode(System.Windows.DependencyObject node, int depth, StringBuilder sb)
+        {
+            try
+            {
+                if (node is System.Windows.FrameworkElement fe && fe.ActualWidth > 0)
+                {
+                    var p = fe.TranslatePoint(new System.Windows.Point(fe.ActualWidth, 0), _root);
+                    sb.AppendLine(new string(' ', depth * 2) + fe.GetType().Name +
+                        " w=" + fe.ActualWidth.ToString("F1") + " rightInMargin=" + p.X.ToString("F1"));
+                }
+                int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(node);
+                for (int i = 0; i < count; i++)
+                    LogNode(System.Windows.Media.VisualTreeHelper.GetChild(node, i), depth + 1, sb);
+            }
+            catch { }
         }
 
         // 行号 margin 的候选名字（VS 内部注册名不确定，逐个探测）
