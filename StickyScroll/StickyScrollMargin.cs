@@ -599,15 +599,54 @@ namespace StickyScroll
                 return;
             try
             {
-                double lineHeight = _view.LineHeight > 0 ? _view.LineHeight : 14.0;
+                double lineHeight = GetCurrentLineHeight();
                 double targetY = lineNumber * lineHeight;
-                double delta = targetY - _view.ViewportTop;
+                // 实测符号：ScrollViewportVerticallyByPixels 正值 = 内容下移（往前/上滚），负值 = 往后滚。
+                // 目标行在视口上方时 targetY < ViewportTop，需正 delta 往前滚。
+                double delta = _view.ViewportTop - targetY;
                 _view.ViewScroller.ScrollViewportVerticallyByPixels(delta);
             }
             catch (InvalidOperationException)
             {
                 // 视图关闭等竞态
             }
+        }
+
+        /// <summary>
+        /// 当前缩放下的实际行高（viewport 像素）。
+        /// 注意：_view.LineHeight / FormattedLineSource.LineHeight 都是未缩放基准，
+        /// 缩放时必须乘 ZoomLevel，否则跳转位置错位。
+        /// </summary>
+        private double GetCurrentLineHeight()
+        {
+            try
+            {
+                if (_view.TextViewLines != null && _view.TextViewLines.Count > 0)
+                {
+                    double h = _view.TextViewLines.FirstVisibleLine.Height;
+                    if (h > 0)
+                        return h;
+                }
+            }
+            catch { }
+
+            // fallback：与渲染一致的行高（未缩放行高/未缩放字号 × 缩放）
+            double em = 13.0;
+            double baseLineHeight = 0;
+            try
+            {
+                if (_view.FormattedLineSource != null)
+                {
+                    em = _view.FormattedLineSource.DefaultTextProperties.FontRenderingEmSize;
+                    baseLineHeight = _view.FormattedLineSource.LineHeight;
+                }
+            }
+            catch { }
+            if (baseLineHeight <= 0)
+                baseLineHeight = _view.LineHeight;
+            double zoom = _view.ZoomLevel > 0 ? _view.ZoomLevel : 100.0;
+            double factor = em > 0 ? baseLineHeight / em : 1.4;
+            return em * factor * zoom / 100.0;
         }
 
         private Brush GetBrush(string itemKey, Brush fallback)

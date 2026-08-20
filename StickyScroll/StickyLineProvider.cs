@@ -26,21 +26,92 @@ namespace StickyScroll
 
         /// <summary>
         /// 计算粘滞链：视口顶行所在的最深作用域，沿祖先链向上取 ≤ maxLines 条。
+        /// 声明级块（namespace/class/method 等）来自 outlining 区域；
+        /// 语句块（if/for/while/try 等）来自启发式扫描器（白名单过滤）。
+        /// 两者合并去重，保证 if/else 等语句块也能粘滞。
         /// </summary>
         public IList<StickyLine> GetStickyLines(ITextView view, int firstVisibleLine, int maxLines)
         {
-            var lines = new List<StickyLine>(maxLines);
-
+            var outlineLines = new List<StickyLine>();
             var outlining = _outliningManagerService.GetOutliningManager(view);
             if (outlining != null && outlining.Enabled)
+                CollectFromOutlining(outlining, view.TextSnapshot, firstVisibleLine, maxLines, outlineLines);
+
+            var scanLines = new List<StickyLine>();
+            CollectFromScanner(view.TextSnapshot, firstVisibleLine, maxLines, scanLines);
+
+            return MergeChains(outlineLines, scanLines, firstVisibleLine, maxLines);
+        }
+
+        /// <summary>
+        /// 合并两条链：扫描链为主（含语句块，深度为括号深度），outlining 链补充
+        /// 扫描器无法识别的声明行（如多行方法签名）。合并后按行号排序，
+        /// 重新取"视口顶行所在的最深祖先链"。
+        /// </summary>
+        private static List<StickyLine> MergeChains(List<StickyLine> outlineChain, List<StickyLine> scanChain,
+            int firstVisibleLine, int maxLines)
+        {
+            if (scanChain.Count == 0)
+                return outlineChain;   // 非花括号语言：outlining 结果保底
+
+            // 1) 合并候选（去重，outlining 独有行深度按"下一个扫描候选深度"推断）
+            var merged = new List<StickyLine>(scanChain);
+            foreach (var o in outlineChain)
             {
-                CollectFromOutlining(outlining, view.TextSnapshot, firstVisibleLine, maxLines, lines);
-                if (lines.Count > 0)
-                    return lines;
+                if (merged.Any(s => s.LineNumber == o.LineNumber))
+                    continue;
+                int depth = 0;
+                foreach (var s in scanChain)
+                {
+                    if (s.LineNumber > o.LineNumber)
+                    {
+                        depth = s.Depth;
+                        break;
+                    }
+                }
+                merged.Add(new StickyLine(o.LineNumber, o.Text, o.IndentLength, depth));
+            }
+            merged.Sort((a, b) => a.LineNumber.CompareTo(b.LineNumber));
+
+            // 2) 视口顶行所在的最深链
+            int idx = -1;
+            for (int i = merged.Count - 1; i >= 0; i--)
+            {
+                if (merged[i].LineNumber <= firstVisibleLine)
+                {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx < 0)
+                return new List<StickyLine>();
+
+            var chain = new List<StickyLine>();
+            chain.Add(merged[idx]);
+            while (chain.Count < maxLines && chain[chain.Count - 1].Depth > 0)
+            {
+                int targetDepth = chain[chain.Count - 1].Depth - 1;
+                StickyLine parent = null;
+                for (int i = idx - 1; i >= 0; i--)
+                {
+                    var l = merged[i];
+                    if (l.Depth == targetDepth && l.LineNumber < chain[chain.Count - 1].LineNumber)
+                    {
+                        parent = l;
+                        break;
+                    }
+                }
+                if (parent == null)
+                    break;
+                chain.Add(parent);
             }
 
-            CollectFromScanner(view.TextSnapshot, firstVisibleLine, maxLines, lines);
-            return lines;
+            chain.Reverse();
+            int d = 0;
+            var result = new List<StickyLine>(chain.Count);
+            foreach (var l in chain)
+                result.Add(new StickyLine(l.LineNumber, l.Text, l.IndentLength, d++));
+            return result;
         }
 
         // ---------------- Outlining 方案 ----------------
@@ -297,13 +368,47 @@ namespace StickyScroll
 
                     if (onlyWhitespace)
                     {
-                        result.Add(new ScannedLine(lineNumber, text, indent, depth)); // 原始文本（含缩进）
+                        // 白名单过滤：只保留"声明/语句块"开始行，排除初始化/lambda/对象初始化等
+                        if (IsStickyCandidate(trimmed))
+                        {
+                            result.Add(new ScannedLine(lineNumber, text, indent, depth)); // 原始文本（含缩进）
+                        }
                     }
                     depth++;
                 }
             }
 
             return result;
+        }
+
+        // 块开始关键词白名单（声明 + 语句 + 修饰符/常见返回类型）
+        private static readonly HashSet<string> BlockKeywords = new HashSet<string>
+        {
+            "namespace","class","interface","struct","enum","record","delegate",
+            "if","for","foreach","while","switch","try","catch","finally","using","lock",
+            "unsafe","checked","unchecked","do","else","get","set","add","remove","init",
+            "public","private","protected","internal","static","abstract","sealed",
+            "virtual","override","partial","extern","async","readonly","ref","void","var"
+        };
+
+        /// <summary>
+        /// 判断一行（已去前导空白）是否为"应该粘滞的块开始行"：
+        /// 排除赋值/初始化（含 = 或 =>）、对象初始化（new）、普通 `{` 行；
+        /// 允许 `} else {` / `} catch {` / `} finally {` / `} while (...)`（do-while）。
+        /// </summary>
+        private static bool IsStickyCandidate(string trimmed)
+        {
+            if (trimmed.Length == 0)
+                return false;
+            if (trimmed[0] == '}')
+            {
+                return trimmed.Contains("else") || trimmed.Contains("catch")
+                    || trimmed.Contains("finally") || trimmed.StartsWith("} while");
+            }
+            if (trimmed.Contains("=") || trimmed.Contains("=>") || trimmed.StartsWith("new "))
+                return false;
+            string first = trimmed.Split(new[] { ' ', '\t', '(', '[', '{' })[0];
+            return BlockKeywords.Contains(first);
         }
     }
 }
