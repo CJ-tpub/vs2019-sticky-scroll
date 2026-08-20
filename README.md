@@ -14,22 +14,21 @@
 
 ## 安装
 
-### 方式一：双击（最简单）⭐
+> VS2019 安装 VSIX 扩展的官方方式有两种：**双击 .vsix 文件** 或 **VSIXInstaller 命令行**。
+> （"扩展 → 管理扩展 → 从文件安装扩展…"按钮是 VS2022 才有的，VS2019 的"管理扩展"窗口没有此入口。）
+
+### 方式一：双击 .vsix（最简单）⭐
 
 从 [Releases](https://github.com/CJ-tpub/vs2019-sticky-scroll/releases) 下载 `StickyScroll.vsix`，**直接双击**文件：
 
-1. 弹出 VSIX Installer 窗口（自动检测本机 VS 版本）
-2. 勾选 **Visual Studio Professional 2019**（如有多个 VS 按需选择）
+1. 系统会调用 VS 的启动器（VSLauncher）打开 **VSIX Installer** 窗口
+2. 按向导确认目标 VS 版本（Visual Studio Professional 2019）
 3. 点 **安装**（UAC 确认）→ **关闭** → 重启 VS 生效
 
 > 已安装过本扩展时：双击**更高版本**的 vsix 即可**直接升级覆盖**（无需先卸载）；
 > 相同版本会提示"已安装"，此时请先卸载或用命令行 `/force` 覆盖安装。
 
-### 方式二：VS 菜单
-
-扩展 → 管理扩展 → 右下角 **"从文件安装扩展"** 按钮 → 选择下载的 `.vsix`。
-
-### 方式三：命令行
+### 方式二：命令行
 
 ```bat
 <VS2019安装目录>\Common7\IDE\VSIXInstaller.exe /q /admin StickyScroll.vsix
