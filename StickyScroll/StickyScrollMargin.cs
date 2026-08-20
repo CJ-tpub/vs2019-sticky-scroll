@@ -45,6 +45,7 @@ namespace StickyScroll
         private double _lastLineNumberRightEdge = double.NaN; // 编辑器行号数字右缘（margin 坐标）
         private double _lastZoom = double.NaN;
         private double _lastLineNumberWidth = double.NaN;
+        private double _calibratedGap = 0;                    // 视口左缘到行号数字右缘的固定间隙（100% 时校准）
 
         public StickyScrollMargin(
             IWpfTextViewHost textViewHost,
@@ -151,11 +152,37 @@ namespace StickyScroll
 
             // 编辑器文本左缘（margin 坐标）= 视口原点（margin 坐标）+ 文本左缘
             double textColumn = GetViewportOriginInMargin() + textLeft;
+            double viewportOrigin = GetViewportOriginInMargin();
 
-            // 编辑器行号数字右缘（margin 坐标）：直接从行号 margin 视觉树实测；异常值时按行号 margin 右缘（VS 右对齐渲染）
-            double lineNumberRightEdge = GetEditorLineNumberRightEdgeInMargin();
-            if (lineNumberRightEdge <= 0 || lineNumberRightEdge > lineNumberRegion)
-                lineNumberRightEdge = lineNumberRegion;
+            // 编辑器行号数字右缘 = 视口左缘 - 固定间隙（selection margin 等，不随缩放）。
+            // 100% 时用 region 精确校准（viewportOrigin - region 涵盖一切 padding）；否则用 selection margin 实测兜底。
+            double selectionGap = _calibratedGap;
+            if (selectionGap <= 0)
+            {
+                try
+                {
+                    var sel = _textViewHost.GetTextViewMargin(PredefinedMarginNames.LeftSelection);
+                    if (sel != null)
+                    {
+                        double w = sel.VisualElement.ActualWidth;
+                        if (w > 0)
+                            selectionGap = w + 8;
+                    }
+                }
+                catch { }
+            }
+            if (selectionGap <= 0)
+                selectionGap = 37;
+            if (Math.Abs(zoom - 100.0) < 0.5)
+            {
+                double cal = viewportOrigin - lineNumberRegion;
+                if (cal > 0)
+                {
+                    _calibratedGap = cal;
+                    selectionGap = cal;
+                }
+            }
+            double lineNumberRightEdge = viewportOrigin - selectionGap;
 
             bool metricsChanged =
                 Math.Abs(_lastZoom - zoom) > 0.01 ||
@@ -366,7 +393,8 @@ namespace StickyScroll
             // 行号区右缘与编辑器文本左缘（margin 坐标，由 UpdateStickyLines 实测几何得出）
             double lineNumberRegion = _lastLineNumberRegion;
             double textColumnInMargin = _lastTextColumn;
-            double lineNumberRightEdge = _lastLineNumberRightEdge > 0 ? _lastLineNumberRightEdge : lineNumberRegion - 2;
+            // 行号数字右缘 = 视口左缘 - 固定间隙（缩放时可能超出行号 margin 区，列宽需覆盖它）
+            double lineNumberRightEdge = _lastLineNumberRightEdge > 0 ? _lastLineNumberRightEdge : lineNumberRegion;
 
             // 行号颜色：与编辑器行号近似的灰色
             var lineNumberBrush = new SolidColorBrush(Color.FromRgb(0x6D, 0x6D, 0x6D));
@@ -379,15 +407,15 @@ namespace StickyScroll
             {
                 var line = lines[i];
 
-                // 每行 = [行号区][文本列]；行号区覆盖行号 margin（含其左侧的 outlining 等），固定行高（拉高更舒展）
+                // 每行 = [行号列][文本列]；行号列宽 = 行号数字右缘（覆盖行号 margin 区），固定行高（拉高更舒展）
                 var grid = new Grid
                 {
                     Height = rowHeight
                 };
-                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(lineNumberRegion) });
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(lineNumberRightEdge) });
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-                // 行号：数字右缘 = 编辑器行号数字右缘（实测）；行号字体与代码文本一致（随缩放，同代码渲染逻辑）
+                // 行号：数字右缘 = 编辑器行号数字右缘（= 行号列右缘）；行号字体与代码文本一致（随缩放，同代码渲染逻辑）
                 var ln = new TextBlock
                 {
                     Text = (line.LineNumber + 1).ToString(),
@@ -397,7 +425,7 @@ namespace StickyScroll
                     FontWeight = typeface.Weight,
                     Foreground = lineNumberBrush,
                     HorizontalAlignment = HorizontalAlignment.Right,
-                    Margin = new Thickness(0, 0, Math.Max(0, lineNumberRegion - lineNumberRightEdge), 0),
+                    Margin = new Thickness(0),
                     VerticalAlignment = VerticalAlignment.Center
                 };
                 Grid.SetColumn(ln, 0);
@@ -409,7 +437,7 @@ namespace StickyScroll
                     FontSize = fontSize,
                     FontStyle = typeface.Style,
                     FontWeight = typeface.Weight,
-                    Margin = new Thickness(Math.Max(0, textColumnInMargin - lineNumberRegion), 0, 0, 0),
+                    Margin = new Thickness(Math.Max(0, textColumnInMargin - lineNumberRightEdge), 0, 0, 0),
                     Padding = new Thickness(0),
                     VerticalAlignment = VerticalAlignment.Center,
                     TextTrimming = TextTrimming.CharacterEllipsis,
