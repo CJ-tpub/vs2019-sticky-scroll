@@ -174,11 +174,7 @@ namespace StickyScroll
             _lastLineNumberRightEdge = lineNumberRightEdge;
             _lastLineNumberWidth = lineNumberWidth;
 
-            if (_metricsChangedSinceLog)
-            {
-                _metricsChangedSinceLog = false;
-                LogGeometry(textLeft, lineNumberWidth, zoom, lineNumberRegion, textColumn, lineNumberRightEdge);
-            }
+            LogGeometry(textLeft, lineNumberWidth, zoom, lineNumberRegion, textColumn, lineNumberRightEdge);
 
             Render(lines);
         }
@@ -254,37 +250,26 @@ namespace StickyScroll
             }
         }
 
-        private bool _metricsChangedSinceLog = true;
-
         /// <summary>
-        /// 几何诊断日志（%TEMP%\sticky-geom.log）：输出 margin/视口/行号 margin 的真实坐标关系。
+        /// 几何诊断日志（%TEMP%\sticky-geom.log）：每次渲染记录坐标与字体数据，用于定位缩放时的偏差。
         /// </summary>
         private void LogGeometry(double textLeft, double lineNumberWidth, double zoom, double lineNumberRegion, double textColumn, double lineNumberRightEdge)
         {
             try
             {
+                double em = _view.FormattedLineSource != null ? _view.FormattedLineSource.DefaultTextProperties.FontRenderingEmSize : -1;
+                double flsLineHeight = _view.FormattedLineSource != null ? _view.FormattedLineSource.LineHeight : -1;
                 var sb = new StringBuilder();
                 sb.AppendLine("---- geometry ----");
-                sb.AppendLine("zoom=" + zoom.ToString("F1") + " textLeft=" + textLeft.ToString("F1") +
+                sb.AppendLine("zoom=" + zoom.ToString("F1") + " emSize=" + em.ToString("F2") +
+                    " (fontSize=emSize, 已是缩放后) " +
+                    " flsLineHeight=" + flsLineHeight.ToString("F2") +
+                    " viewLineHeight=" + _view.LineHeight.ToString("F2"));
+                sb.AppendLine("textLeft=" + textLeft.ToString("F1") +
                     " lineNumberWidth=" + lineNumberWidth.ToString("F1") +
                     " lineNumberRegion=" + lineNumberRegion.ToString("F1") +
                     " lineNumberRightEdge=" + lineNumberRightEdge.ToString("F1") +
                     " textColumnInMargin=" + textColumn.ToString("F1"));
-
-                // 行号 margin 探测
-                foreach (var name in LineNumberMarginNames)
-                {
-                    try
-                    {
-                        var m = _textViewHost.GetTextViewMargin(name);
-                        if (m != null)
-                        {
-                            sb.AppendLine("margin '" + name + "' hit: actualW=" + m.VisualElement.ActualWidth.ToString("F1") +
-                                " originInMargin=" + m.VisualElement.TranslatePoint(new System.Windows.Point(0, 0), _root).X.ToString("F1"));
-                        }
-                    }
-                    catch { }
-                }
 
                 System.IO.File.AppendAllText(
                     System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sticky-geom.log"),
@@ -339,19 +324,15 @@ namespace StickyScroll
             // 前景 fallback
             var foreground = GetBrush(EditorFormatDefinition.ForegroundBrushId, Brushes.Gray);
 
-            // 字体：与编辑器完全一致（DefaultTextProperties 为未缩放基准，乘 ZoomLevel 得到实际渲染大小）
+            // 字体：直接取格式化行源的当前属性（FormattedLineSource 随缩放重建，FontRenderingEmSize/LineHeight 已是缩放后的实际值）
             var defaultProps = _view.FormattedLineSource != null
                 ? _view.FormattedLineSource.DefaultTextProperties
                 : null;
             Typeface typeface = defaultProps != null ? defaultProps.Typeface : new Typeface("Consolas");
             double zoom = _view.ZoomLevel > 0 ? _view.ZoomLevel : 100.0;
-            double fontSize = defaultProps != null
-                ? defaultProps.FontRenderingEmSize * zoom / 100.0
-                : 14.0;
+            double fontSize = defaultProps != null ? defaultProps.FontRenderingEmSize : 13.0;
 
-            // 行高：按"未缩放行高/未缩放字号"的比例随缩放同步（行高系数 ~1.36）
-            double lineHeightFactor = 1.4;
-            double baseFontSize = defaultProps != null ? defaultProps.FontRenderingEmSize : 14.0;
+            // 行高：取格式化行源的当前行高（已含缩放），略微拉高（更舒展）
             double baseLineHeight = 0;
             try
             {
@@ -361,10 +342,9 @@ namespace StickyScroll
             catch { }
             if (baseLineHeight <= 0)
                 baseLineHeight = _view.LineHeight;
-            if (baseLineHeight > 0 && baseFontSize > 0)
-                lineHeightFactor = baseLineHeight / baseFontSize;
-            double lineHeight = fontSize * lineHeightFactor;
-            double rowHeight = lineHeight * 1.12;
+            if (baseLineHeight <= 0)
+                baseLineHeight = fontSize * 1.4;
+            double rowHeight = baseLineHeight * 1.12;
 
             // Tab 宽度（编辑器设置，用于前导 Tab 展开对齐）
             int tabSize = 4;
