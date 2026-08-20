@@ -23,8 +23,22 @@ namespace StickyScroll
     {
         public const string MarginName = "StickyScrollMargin";
 
-        // 默认显示的最大粘滞行数（后续由选项页接管）
+        // 默认显示的最大粘滞行数（可由选项页配置，工具 → 选项 → StickyScroll）
         private const int DefaultMaxLines = 3;
+
+        private static int GetMaxLines()
+        {
+            var o = StickyScrollOptions.Instance;
+            if (o != null && o.MaxLines >= 1 && o.MaxLines <= 10)
+                return o.MaxLines;
+            return DefaultMaxLines;
+        }
+
+        private static bool GetEnabled()
+        {
+            var o = StickyScrollOptions.Instance;
+            return o == null || o.Enabled;
+        }
 
         private readonly IWpfTextView _view;
         private readonly IWpfTextViewHost _textViewHost;
@@ -111,6 +125,17 @@ namespace StickyScroll
             if (_isDisposed || _view.IsClosed)
                 return;
 
+            // 选项：禁用时清空粘滞栏
+            if (!GetEnabled())
+            {
+                if (_root.Children.Count > 0)
+                {
+                    _root.Children.Clear();
+                    _lastLines = new StickyLine[0];
+                }
+                return;
+            }
+
             // 首可见行
             ITextViewLine firstLine;
             try
@@ -126,7 +151,7 @@ namespace StickyScroll
 
             int firstVisibleLineNumber = firstLine.Start.GetContainingLine().LineNumber;
 
-            var lines = _stickyLineProvider.GetStickyLines(_view, firstVisibleLineNumber, DefaultMaxLines);
+            var lines = _stickyLineProvider.GetStickyLines(_view, firstVisibleLineNumber, GetMaxLines());
 
             // 渲染度量：缩放级别、文本区左缘、行号列宽——任何一项变化都必须重绘（缩放跟随）
             double zoom = _view.ZoomLevel > 0 ? _view.ZoomLevel : 100.0;

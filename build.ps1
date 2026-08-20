@@ -31,6 +31,7 @@ $binDir = Join-Path $root "StickyScroll\bin\$Configuration"
 Copy-Item (Join-Path $binDir "StickyScroll.dll") $staging
 Copy-Item (Join-Path $binDir "StickyScroll.pdb") $staging -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $root "StickyScroll\source.extension.vsixmanifest") (Join-Path $staging "extension.vsixmanifest")
+Copy-Item (Join-Path $root "StickyScroll\StickyScroll.pkgdef") $staging
 
 # [Content_Types].xml (OPC requirement; MUST be the first zip entry)
 $contentTypes = @'
@@ -39,6 +40,7 @@ $contentTypes = @'
   <Default Extension="vsixmanifest" ContentType="application/vsixmanifest"/>
   <Default Extension="dll" ContentType="application/octet-stream"/>
   <Default Extension="pdb" ContentType="application/octet-stream"/>
+  <Default Extension="pkgdef" ContentType="text/plain"/>
 </Types>
 '@
 [System.IO.File]::WriteAllText(
@@ -54,7 +56,7 @@ $vsix = Join-Path $root "StickyScroll.vsix"
 if (Test-Path $vsix) { Remove-Item $vsix -Force }
 $fs = [System.IO.File]::Open($vsix, [System.IO.FileMode]::Create)
 $zip = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
-foreach ($rel in @('[Content_Types].xml', 'extension.vsixmanifest', 'StickyScroll.dll', 'StickyScroll.pdb')) {
+foreach ($rel in @('[Content_Types].xml', 'extension.vsixmanifest', 'StickyScroll.dll', 'StickyScroll.pdb', 'StickyScroll.pkgdef')) {
     $src = Join-Path $staging $rel
     if (-not (Test-Path -LiteralPath $src)) { continue }   # MUST use -LiteralPath: [ is a wildcard, otherwise [Content_Types].xml is skipped
     $entry = $zip.CreateEntry($rel, [System.IO.Compression.CompressionLevel]::Optimal)

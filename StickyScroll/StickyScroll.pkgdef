@@ -1,0 +1,15 @@
+[$RootKey$\Packages\{8C3F0D52-4E6B-4A9C-B2D3-5F7A1C9E3B04}]
+@="StickyScroll"
+"ID"=dword:00000001
+"MinEdition"="Professional"
+"ProductVersion"="16.0"
+"PackageLoadBehavior"=dword:00000000
+"SatelliteDll"=""
+"UseInterface"=dword:00000000
+
+[$RootKey$\Packages\{8C3F0D52-4E6B-4A9C-B2D3-5F7A1C9E3B04}\Options]
+"StickyScroll"=dword:00000000
+
+[$RootKey$\Packages\{8C3F0D52-4E6B-4A9C-B2D3-5F7A1C9E3B04}\Options\StickyScroll\General]
+"PageClass"="StickyScroll.StickyScrollOptions"
+"Package"="{8C3F0D52-4E6B-4A9C-B2D3-5F7A1C9E3B04}"
