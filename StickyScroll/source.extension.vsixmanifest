@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
-    <Identity Id="StickyScroll.v1" Version="1.1.0" Language="en-US" Publisher="StickyScroll" />
+    <Identity Id="StickyScroll.v1" Version="2.1.0" Language="en-US" Publisher="StickyScroll" />
     <DisplayName>Sticky Scroll</DisplayName>
     <Description xml:space="preserve">Sticky scroll for Visual Studio 2019: keep the current code scope headers (namespace/class/method) pinned at the top of the editor while scrolling, like VS2022 / VSCode.</Description>
     <Tags>sticky, scroll, editor, productivity</Tags>
