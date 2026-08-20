@@ -5,7 +5,7 @@ description: Visual Studio 2019 VSIX 编辑器扩展开发的完整实战指南�
 
 # VS2019 扩展开发实战指南（VSIX / 编辑器扩展）
 
-> 本技能沉淀自一次完整的 VS2019 编辑器扩展开发实战（开源参考：github.com/CJ-tpub/vs2019-sticky-scroll）。
+> 本技能沉淀自一次完整的 VS2019 编辑器扩展开发实战，均为实测经验。
 > **先读"环境前提"，再按"开发流程"执行，遇到问题查"避坑清单"。**
 
 ## 一、环境前提（开工前必查）
@@ -126,7 +126,8 @@ git init && git add -A && git commit -m "..."
 
 # 推送到 GitHub（gh CLI 已认证时）
 gh auth setup-git              # 让 git 用 gh 的凭证（避免默认凭证账号不对）
-$env:HTTP_PROXY='http://127.0.0.1:7897'; $env:HTTPS_PROXY='...'   # 代理（HTTPS 直连不通的环境）
+# 仅当 HTTPS 直连不通、且本机配置了代理时才需要设置（把 <代理地址> 换成你的，如 http://127.0.0.1:7897）；无代理环境跳过这两行
+$env:HTTP_PROXY='<代理地址>'; $env:HTTPS_PROXY='<代理地址>'
 git branch -M main && git push -u origin main
 
 # 建仓库 + Release
