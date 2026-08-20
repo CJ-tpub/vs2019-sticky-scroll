@@ -324,15 +324,17 @@ namespace StickyScroll
             // 前景 fallback
             var foreground = GetBrush(EditorFormatDefinition.ForegroundBrushId, Brushes.Gray);
 
-            // 字体：直接取格式化行源的当前属性（FormattedLineSource 随缩放重建，FontRenderingEmSize/LineHeight 已是缩放后的实际值）
+            // 字体：基准 em（FormattedLineSource 的 FontRenderingEmSize 不随缩放变）乘 ZoomLevel 得到代码文本实际渲染大小
             var defaultProps = _view.FormattedLineSource != null
                 ? _view.FormattedLineSource.DefaultTextProperties
                 : null;
             Typeface typeface = defaultProps != null ? defaultProps.Typeface : new Typeface("Consolas");
             double zoom = _view.ZoomLevel > 0 ? _view.ZoomLevel : 100.0;
-            double fontSize = defaultProps != null ? defaultProps.FontRenderingEmSize : 13.0;
+            double emSize = defaultProps != null ? defaultProps.FontRenderingEmSize : 13.0;
+            double fontSize = emSize * zoom / 100.0;
 
-            // 行高：取格式化行源的当前行高（已含缩放），略微拉高（更舒展）
+            // 行高：按"未缩放行高/未缩放字号"的比例随缩放同步（行高系数 ~1.36）
+            double lineHeightFactor = 1.4;
             double baseLineHeight = 0;
             try
             {
@@ -342,9 +344,10 @@ namespace StickyScroll
             catch { }
             if (baseLineHeight <= 0)
                 baseLineHeight = _view.LineHeight;
-            if (baseLineHeight <= 0)
-                baseLineHeight = fontSize * 1.4;
-            double rowHeight = baseLineHeight * 1.12;
+            if (baseLineHeight > 0 && emSize > 0)
+                lineHeightFactor = baseLineHeight / emSize;
+            double lineHeight = fontSize * lineHeightFactor;
+            double rowHeight = lineHeight * 1.12;
 
             // Tab 宽度（编辑器设置，用于前导 Tab 展开对齐）
             int tabSize = 4;
@@ -384,12 +387,12 @@ namespace StickyScroll
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(lineNumberRegion) });
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-                // 行号：数字右缘 = 编辑器行号数字右缘（实测），逐像素对齐
+                // 行号：数字右缘 = 编辑器行号数字右缘（实测）；行号字体用未缩放字号（编辑器行号数字不随缩放变化）
                 var ln = new TextBlock
                 {
                     Text = (line.LineNumber + 1).ToString(),
                     FontFamily = typeface.FontFamily,
-                    FontSize = fontSize,
+                    FontSize = emSize,
                     FontStyle = typeface.Style,
                     FontWeight = typeface.Weight,
                     Foreground = lineNumberBrush,
