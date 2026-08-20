@@ -40,8 +40,9 @@ namespace StickyScroll
 
         // 最近一次渲染的链与渲染度量（缩放/文本列/行号区位置变化时强制重绘）
         private IList<StickyLine> _lastLines = new StickyLine[0];
-        private double _lastTextColumn = double.NaN;        // 编辑器文本左缘（margin 坐标）
-        private double _lastLineNumberRegion = double.NaN;  // 行号区右缘（margin 坐标）
+        private double _lastTextColumn = double.NaN;          // 编辑器文本左缘（margin 坐标）
+        private double _lastLineNumberRegion = double.NaN;    // 行号区右缘（margin 坐标）
+        private double _lastLineNumberRightEdge = double.NaN; // 编辑器行号数字右缘（margin 坐标）
         private double _lastZoom = double.NaN;
         private double _lastLineNumberWidth = double.NaN;
 
@@ -151,10 +152,16 @@ namespace StickyScroll
             // 编辑器文本左缘（margin 坐标）= 视口原点（margin 坐标）+ 文本左缘
             double textColumn = GetViewportOriginInMargin() + textLeft;
 
+            // 编辑器行号数字右缘（margin 坐标）：直接从行号 margin 视觉树实测；异常值时按行号 margin 右缘（VS 右对齐渲染）
+            double lineNumberRightEdge = GetEditorLineNumberRightEdgeInMargin();
+            if (lineNumberRightEdge <= 0 || lineNumberRightEdge > lineNumberRegion)
+                lineNumberRightEdge = lineNumberRegion;
+
             bool metricsChanged =
                 Math.Abs(_lastZoom - zoom) > 0.01 ||
                 Math.Abs(_lastTextColumn - textColumn) > 0.5 ||
                 Math.Abs(_lastLineNumberRegion - lineNumberRegion) > 0.5 ||
+                Math.Abs(_lastLineNumberRightEdge - lineNumberRightEdge) > 0.5 ||
                 Math.Abs(_lastLineNumberWidth - lineNumberWidth) > 0.5;
 
             // 避免无谓重绘：链相同且渲染度量未变则跳过
@@ -164,15 +171,57 @@ namespace StickyScroll
             _lastZoom = zoom;
             _lastTextColumn = textColumn;
             _lastLineNumberRegion = lineNumberRegion;
+            _lastLineNumberRightEdge = lineNumberRightEdge;
             _lastLineNumberWidth = lineNumberWidth;
 
             if (_metricsChangedSinceLog)
             {
                 _metricsChangedSinceLog = false;
-                LogGeometry(textLeft, lineNumberWidth, zoom, lineNumberRegion, textColumn);
+                LogGeometry(textLeft, lineNumberWidth, zoom, lineNumberRegion, textColumn, lineNumberRightEdge);
             }
 
             Render(lines);
+        }
+
+        /// <summary>
+        /// 编辑器行号数字的右缘（margin 坐标）：遍历行号 margin 视觉树，取最右侧子元素右缘
+        /// （VS 行号数字右对齐渲染，其容器右缘即数字右缘）。找不到时返回 0。
+        /// </summary>
+        private double GetEditorLineNumberRightEdgeInMargin()
+        {
+            try
+            {
+                var m = _textViewHost.GetTextViewMargin(PredefinedMarginNames.LineNumber);
+                if (m == null)
+                    return 0;
+                var visual = m.VisualElement;
+                double best = 0;
+                WalkRightmost(visual, ref best);
+                if (best > 0)
+                    return best;
+                // fallback：margin 元素右缘
+                double w = visual.ActualWidth > 0 ? visual.ActualWidth : visual.DesiredSize.Width;
+                if (w > 0)
+                    return visual.TranslatePoint(new System.Windows.Point(w, 0), _root).X;
+            }
+            catch { }
+            return 0;
+        }
+
+        private void WalkRightmost(System.Windows.DependencyObject node, ref double bestRight)
+        {
+            int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(node);
+            for (int i = 0; i < count; i++)
+            {
+                var child = System.Windows.Media.VisualTreeHelper.GetChild(node, i);
+                if (child is System.Windows.FrameworkElement fe && fe.ActualWidth > 0)
+                {
+                    var p = fe.TranslatePoint(new System.Windows.Point(fe.ActualWidth, 0), _root);
+                    if (p.X > bestRight)
+                        bestRight = p.X;
+                }
+                WalkRightmost(child, ref bestRight);
+            }
         }
 
         /// <summary>
@@ -210,7 +259,7 @@ namespace StickyScroll
         /// <summary>
         /// 几何诊断日志（%TEMP%\sticky-geom.log）：输出 margin/视口/行号 margin 的真实坐标关系。
         /// </summary>
-        private void LogGeometry(double textLeft, double lineNumberWidth, double zoom, double lineNumberRegion, double textColumn)
+        private void LogGeometry(double textLeft, double lineNumberWidth, double zoom, double lineNumberRegion, double textColumn, double lineNumberRightEdge)
         {
             try
             {
@@ -219,6 +268,7 @@ namespace StickyScroll
                 sb.AppendLine("zoom=" + zoom.ToString("F1") + " textLeft=" + textLeft.ToString("F1") +
                     " lineNumberWidth=" + lineNumberWidth.ToString("F1") +
                     " lineNumberRegion=" + lineNumberRegion.ToString("F1") +
+                    " lineNumberRightEdge=" + lineNumberRightEdge.ToString("F1") +
                     " textColumnInMargin=" + textColumn.ToString("F1"));
 
                 // 行号 margin 探测
@@ -235,10 +285,6 @@ namespace StickyScroll
                     }
                     catch { }
                 }
-
-                // 行高来源
-                sb.AppendLine("view.LineHeight=" + _view.LineHeight.ToString("F2") +
-                    " formattedLineSource.LineHeight=" + (_view.FormattedLineSource != null ? _view.FormattedLineSource.LineHeight.ToString("F2") : "null"));
 
                 System.IO.File.AppendAllText(
                     System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sticky-geom.log"),
@@ -337,6 +383,7 @@ namespace StickyScroll
             // 行号区右缘与编辑器文本左缘（margin 坐标，由 UpdateStickyLines 实测几何得出）
             double lineNumberRegion = _lastLineNumberRegion;
             double textColumnInMargin = _lastTextColumn;
+            double lineNumberRightEdge = _lastLineNumberRightEdge > 0 ? _lastLineNumberRightEdge : lineNumberRegion - 2;
 
             // 行号颜色：与编辑器行号近似的灰色
             var lineNumberBrush = new SolidColorBrush(Color.FromRgb(0x6D, 0x6D, 0x6D));
@@ -357,7 +404,7 @@ namespace StickyScroll
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(lineNumberRegion) });
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-                // 行号：行号区内右对齐（数字右缘与编辑器行号数字同位）
+                // 行号：数字右缘 = 编辑器行号数字右缘（实测），逐像素对齐
                 var ln = new TextBlock
                 {
                     Text = (line.LineNumber + 1).ToString(),
@@ -367,7 +414,7 @@ namespace StickyScroll
                     FontWeight = typeface.Weight,
                     Foreground = lineNumberBrush,
                     HorizontalAlignment = HorizontalAlignment.Right,
-                    Margin = new Thickness(0, 0, 2, 0),
+                    Margin = new Thickness(0, 0, Math.Max(0, lineNumberRegion - lineNumberRightEdge), 0),
                     VerticalAlignment = VerticalAlignment.Center
                 };
                 Grid.SetColumn(ln, 0);
