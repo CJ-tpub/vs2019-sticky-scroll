@@ -33,6 +33,18 @@ D:\vs2019\Common7\IDE\VSIXInstaller.exe /q /uninstall:StickyScroll.v1
 3. 点击任意粘滞行 —— 跳转到对应声明行
 4. 滚回文件顶部 —— 粘滞栏自动消失
 
+## 设置（配置文件）
+
+编辑 `%APPDATA%\StickyScroll\settings.ini`（首次运行自动创建模板），保存后滚动即生效：
+
+```ini
+# StickyScroll settings
+MaxLines=3      # 最大粘滞行数（1-10）
+Enabled=true    # 总开关（true/false）
+```
+
+> 说明：VS 选项页（Tools→Options）依赖 Package/pkgdef 注册链路，本机 VSIXInstaller 17.14 对 VS2019 的该链路失效（扩展本身注册正常、选项页无法注册），故采用配置文件方案，简单可靠。
+
 ## 构建（离线，无 NuGet/VSSDK 依赖）
 
 本机环境约束：HTTPS 不通、无 VSSDK BuildTools → 采用**全离线构建**：

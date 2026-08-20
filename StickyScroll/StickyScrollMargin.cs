@@ -23,21 +23,14 @@ namespace StickyScroll
     {
         public const string MarginName = "StickyScrollMargin";
 
-        // 默认显示的最大粘滞行数（可由选项页配置，工具 → 选项 → StickyScroll）
-        private const int DefaultMaxLines = 3;
-
         private static int GetMaxLines()
         {
-            var o = StickyScrollOptions.Instance;
-            if (o != null && o.MaxLines >= 1 && o.MaxLines <= 10)
-                return o.MaxLines;
-            return DefaultMaxLines;
+            return StickyScrollSettings.MaxLines;
         }
 
         private static bool GetEnabled()
         {
-            var o = StickyScrollOptions.Instance;
-            return o == null || o.Enabled;
+            return StickyScrollSettings.Enabled;
         }
 
         private readonly IWpfTextView _view;
@@ -202,50 +195,7 @@ namespace StickyScroll
             _lastLineNumberRightEdge = lineNumberRightEdge;
             _lastLineNumberWidth = lineNumberWidth;
 
-            LogGeometry(textLeft, lineNumberWidth, zoom, lineNumberRegion, textColumn, lineNumberRightEdge);
-
             Render(lines);
-        }
-
-        /// <summary>
-        /// 编辑器行号数字的右缘（margin 坐标）：遍历行号 margin 视觉树，取最右侧子元素右缘
-        /// （VS 行号数字右对齐渲染，其容器右缘即数字右缘）。找不到时返回 0。
-        /// </summary>
-        private double GetEditorLineNumberRightEdgeInMargin()
-        {
-            try
-            {
-                var m = _textViewHost.GetTextViewMargin(PredefinedMarginNames.LineNumber);
-                if (m == null)
-                    return 0;
-                var visual = m.VisualElement;
-                double best = 0;
-                WalkRightmost(visual, ref best);
-                if (best > 0)
-                    return best;
-                // fallback：margin 元素右缘
-                double w = visual.ActualWidth > 0 ? visual.ActualWidth : visual.DesiredSize.Width;
-                if (w > 0)
-                    return visual.TranslatePoint(new System.Windows.Point(w, 0), _root).X;
-            }
-            catch { }
-            return 0;
-        }
-
-        private void WalkRightmost(System.Windows.DependencyObject node, ref double bestRight)
-        {
-            int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(node);
-            for (int i = 0; i < count; i++)
-            {
-                var child = System.Windows.Media.VisualTreeHelper.GetChild(node, i);
-                if (child is System.Windows.FrameworkElement fe && fe.ActualWidth > 0)
-                {
-                    var p = fe.TranslatePoint(new System.Windows.Point(fe.ActualWidth, 0), _root);
-                    if (p.X > bestRight)
-                        bestRight = p.X;
-                }
-                WalkRightmost(child, ref bestRight);
-            }
         }
 
         /// <summary>
@@ -341,88 +291,6 @@ namespace StickyScroll
                 return 0;
             }
         }
-
-        /// <summary>
-        /// 几何诊断日志（%TEMP%\sticky-geom.log）：每次渲染记录坐标与字体数据，用于定位缩放时的偏差。
-        /// </summary>
-        private void LogGeometry(double textLeft, double lineNumberWidth, double zoom, double lineNumberRegion, double textColumn, double lineNumberRightEdge)
-        {
-            try
-            {
-                double em = _view.FormattedLineSource != null ? _view.FormattedLineSource.DefaultTextProperties.FontRenderingEmSize : -1;
-                double flsLineHeight = _view.FormattedLineSource != null ? _view.FormattedLineSource.LineHeight : -1;
-                var sb = new StringBuilder();
-                sb.AppendLine("---- geometry ----");
-                sb.AppendLine("zoom=" + zoom.ToString("F1") + " emSize=" + em.ToString("F2") +
-                    " (fontSize=emSize, 已是缩放后) " +
-                    " flsLineHeight=" + flsLineHeight.ToString("F2") +
-                    " viewLineHeight=" + _view.LineHeight.ToString("F2"));
-                sb.AppendLine("textLeft=" + textLeft.ToString("F1") +
-                    " lineNumberWidth=" + lineNumberWidth.ToString("F1") +
-                    " lineNumberRegion=" + lineNumberRegion.ToString("F1") +
-                    " lineNumberRightEdge=" + lineNumberRightEdge.ToString("F1") +
-                    " textColumnInMargin=" + textColumn.ToString("F1") +
-                    " viewportOrigin=" + GetViewportOriginInMargin().ToString("F1") +
-                    " canvasLeft=" + GetTextViewCanvasLeftInMargin().ToString("F1") +
-                    " viewElementType=" + (_view.VisualElement != null ? _view.VisualElement.GetType().Name : "null"));
-
-                // 行号 margin 视觉树结构（定位数字元素右缘）
-                try
-                {
-                    var lnm = _textViewHost.GetTextViewMargin(PredefinedMarginNames.LineNumber);
-                    if (lnm != null)
-                    {
-                        sb.AppendLine("-- line-number margin tree --");
-                        LogNode(lnm.VisualElement, 0, sb);
-                    }
-                }
-                catch { }
-
-                // 视口元素视觉树（定位文本层）
-                try
-                {
-                    if (_view.VisualElement != null)
-                    {
-                        sb.AppendLine("-- view element tree --");
-                        LogNode(_view.VisualElement, 0, sb);
-                    }
-                }
-                catch { }
-
-                System.IO.File.AppendAllText(
-                    System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sticky-geom.log"),
-                    sb.ToString());
-            }
-            catch
-            {
-                // ignore
-            }
-        }
-
-        private void LogNode(System.Windows.DependencyObject node, int depth, StringBuilder sb)
-        {
-            try
-            {
-                if (node is System.Windows.FrameworkElement fe && fe.ActualWidth > 0)
-                {
-                    var p = fe.TranslatePoint(new System.Windows.Point(fe.ActualWidth, 0), _root);
-                    sb.AppendLine(new string(' ', depth * 2) + fe.GetType().Name +
-                        " w=" + fe.ActualWidth.ToString("F1") + " rightInMargin=" + p.X.ToString("F1"));
-                }
-                int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(node);
-                for (int i = 0; i < count; i++)
-                    LogNode(System.Windows.Media.VisualTreeHelper.GetChild(node, i), depth + 1, sb);
-            }
-            catch { }
-        }
-
-        // 行号 margin 的候选名字（VS 内部注册名不确定，逐个探测）
-        private static readonly string[] LineNumberMarginNames =
-        {
-            PredefinedMarginNames.LineNumber,
-            "LineNumberMargin",
-            "Microsoft.VisualStudio.Text.Editor.LineNumberMargin"
-        };
 
         private static bool SameChain(IList<StickyLine> a, IList<StickyLine> b)
         {
@@ -587,24 +455,21 @@ namespace StickyScroll
         /// </summary>
         private double GetLineNumberMarginWidth()
         {
-            foreach (var name in LineNumberMarginNames)
+            try
             {
-                try
+                var m = _textViewHost.GetTextViewMargin(PredefinedMarginNames.LineNumber);
+                if (m != null)
                 {
-                    var m = _textViewHost.GetTextViewMargin(name);
-                    if (m != null)
-                    {
-                        double w = m.VisualElement.ActualWidth;
-                        if (w <= 0)
-                            w = m.VisualElement.DesiredSize.Width;
-                        if (w > 0)
-                            return w;
-                    }
+                    double w = m.VisualElement.ActualWidth;
+                    if (w <= 0)
+                        w = m.VisualElement.DesiredSize.Width;
+                    if (w > 0)
+                        return w;
                 }
-                catch
-                {
-                    // 尝试下一个名字
-                }
+            }
+            catch
+            {
+                // fallthrough
             }
             return 0;
         }

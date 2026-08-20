@@ -86,8 +86,7 @@
     <Compile Include="StickyLineProvider.cs" />
     <Compile Include="StickyScrollMargin.cs" />
     <Compile Include="StickyScrollMarginProvider.cs" />
-    <Compile Include="StickyScrollOptions.cs" />
-    <Compile Include="StickyScrollPackage.cs" />
+    <Compile Include="StickyScrollSettings.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

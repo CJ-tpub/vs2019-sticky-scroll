@@ -14,6 +14,5 @@
   <!-- 注意：不带 Prerequisites。VSIXInstaller(17.14) 在本机对带 Prerequisites 的包会报"不是有效的 VSIX 包"（状态相关 bug）；VS2019 必有 CoreEditor，无实际风险。 -->
   <Assets>
     <Asset Type="Microsoft.VisualStudio.MefComponent" d:Source="File" Path="StickyScroll.dll" />
-    <Asset Type="Microsoft.VisualStudio.VsPackage" d:Source="File" Path="StickyScroll.pkgdef" />
   </Assets>
 </PackageManifest>
